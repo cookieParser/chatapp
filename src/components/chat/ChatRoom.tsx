@@ -61,7 +61,7 @@ export function ChatRoom({ channelId, groupId, type }: ChatRoomProps) {
         const userData = userRes.ok ? await userRes.json() : null;
         const mongoUserId = userData?.id || session.user.id;
 
-        const newSocket = io({
+        const newSocket = io('https://chatapp-socket-r8n6.onrender.com', {
           auth: {
             userId: mongoUserId,
             username: session.user.name || session.user.email,
