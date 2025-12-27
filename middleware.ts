@@ -31,7 +31,7 @@ export default auth((req) => {
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: ws:;"
+    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://chatapp-socket-r8n6.onrender.com wss://chatapp-socket-r8n6.onrender.com wss: ws: https:;"
   );
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   
