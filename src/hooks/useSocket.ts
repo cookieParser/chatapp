@@ -105,6 +105,7 @@ export function useSocket(options: UseSocketOptions) {
 
     // Use separate socket server URL in production, same origin in development
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || undefined;
+    console.log('Socket URL:', socketUrl, 'ENV:', process.env.NEXT_PUBLIC_SOCKET_URL);
     
     const socket: SocketClient = io(socketUrl, {
       auth: { userId, username },
