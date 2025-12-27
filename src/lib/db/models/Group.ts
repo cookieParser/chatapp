@@ -29,6 +29,11 @@ export interface IGroup extends Document {
   deletedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+  // Methods
+  softDelete(): Promise<IGroup>;
+  isMember(userId: mongoose.Types.ObjectId): boolean;
+  isAdmin(userId: mongoose.Types.ObjectId): boolean;
+  isOwner(userId: mongoose.Types.ObjectId): boolean;
 }
 
 const GroupMemberSchema = new Schema<IGroupMember>(

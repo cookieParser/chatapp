@@ -32,13 +32,13 @@ export class GroupService {
     )];
 
     const conversation = await Conversation.create({
-      type: 'group',
+      type: 'group' as const,
       name: input.name,
       description: input.description,
       image: input.avatarUrl,
       participants: allParticipantIds.map((userId) => ({
         user: userId,
-        role: userId.toString() === creatorId ? 'admin' : 'member',
+        role: (userId.toString() === creatorId ? 'admin' : 'member') as 'admin' | 'member',
       })),
       createdBy: creatorObjectId,
     });

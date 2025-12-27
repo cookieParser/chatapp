@@ -13,9 +13,9 @@ async function getDbUser(session: any) {
   if (!dbUser) {
     // Create user if doesn't exist
     dbUser = await User.create({
-      email: session.user.email,
+      email: session.user.email!,
       name: session.user.name || 'User',
-      image: session.user.image,
+      image: session.user.image || undefined,
       provider: 'credentials',
       status: 'online',
     });

@@ -74,9 +74,10 @@ const ConversationSchema = new Schema<IConversation>(
     participants: {
       type: [ParticipantSchema],
       validate: {
-        validator: function (this: IConversation, v: IParticipant[]) {
+        validator: function (v: IParticipant[]) {
           // Direct messages need 2 participants, groups/channels can have 1+
-          if (this.type === 'direct') {
+          const doc = this as unknown as IConversation;
+          if (doc.type === 'direct') {
             return v.length >= 2;
           }
           return v.length >= 1;

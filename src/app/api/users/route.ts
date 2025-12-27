@@ -18,9 +18,9 @@ export async function GET() {
     // Create current user if doesn't exist
     if (!currentUser) {
       currentUser = await User.create({
-        email: session.user.email,
+        email: session.user.email!,
         name: session.user.name || 'User',
-        image: session.user.image,
+        image: session.user.image || undefined,
         provider: 'credentials',
         status: 'online',
       });

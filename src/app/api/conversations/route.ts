@@ -48,9 +48,9 @@ export async function POST(request: NextRequest) {
         let dbUser = await User.findOne({ email: session.user.email });
         if (!dbUser) {
           dbUser = await User.create({
-            email: session.user.email,
+            email: session.user.email!,
             name: session.user.name || 'User',
-            image: session.user.image,
+            image: session.user.image || undefined,
             provider: 'credentials',
             status: 'online',
           });
@@ -73,9 +73,9 @@ export async function POST(request: NextRequest) {
         let dbUser = await User.findOne({ email: session.user.email });
         if (!dbUser) {
           dbUser = await User.create({
-            email: session.user.email,
+            email: session.user.email!,
             name: session.user.name || 'User',
-            image: session.user.image,
+            image: session.user.image || undefined,
             provider: 'credentials',
             status: 'online',
           });
@@ -111,9 +111,9 @@ export async function POST(request: NextRequest) {
       let dbUser = await User.findOne({ email: session.user.email });
       if (!dbUser) {
         dbUser = await User.create({
-          email: session.user.email,
+          email: session.user.email!,
           name: session.user.name || 'User',
-          image: session.user.image,
+          image: session.user.image || undefined,
           provider: 'credentials',
           status: 'online',
         });
