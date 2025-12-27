@@ -1,0 +1,52 @@
+version: '3.8'
+
+# Development docker-compose with hot reload
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=${MONGODB_URI}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - NEXTAUTH_URL=http://localhost:3000
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+      - NEXT_PUBLIC_SOCKET_URL=http://localhost:3001
+      - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+    depends_on:
+      - socket
+    networks:
+      - chatapp-network
+
+  socket:
+    build:
+      context: .
+      dockerfile: Dockerfile.socket
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./socket-server.ts:/app/socket-server.ts
+      - ./src/lib:/app/src/lib
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - MONGODB_URI=${MONGODB_URI}
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+    networks:
+      - chatapp-network
+
+networks:
+  chatapp-network:
+    driver: bridge

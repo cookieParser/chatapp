@@ -133,29 +133,30 @@ async function updateLastSeenInDB(userId: string) {
 }
 
 export function createSocketServer(httpServer: HttpServer): SocketServer {
-  const allowedOrigins = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000')
+  // Allow multiple origins - localhost for dev, production URLs for deployed apps
+  const configuredOrigins = (process.env.NEXT_PUBLIC_APP_URL || '')
     .split(',')
-    .map(origin => origin.trim());
+    .map(origin => origin.trim())
+    .filter(Boolean);
+  
+  // Default allowed origins (always allow these)
+  const defaultOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+  ];
+  
+  const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
 
   const io: SocketServer = new Server(httpServer, {
     cors: {
-      origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, curl, etc.) in development
-        if (!origin && process.env.NODE_ENV !== 'production') {
-          return callback(null, true);
-        }
-        if (origin && allowedOrigins.includes(origin)) {
-          return callback(null, true);
-        }
-        callback(new Error('CORS not allowed'));
-      },
+      origin: allowedOrigins,
       methods: ['GET', 'POST'],
       credentials: true,
     },
     pingTimeout: 60000,
     pingInterval: 25000,
-    // Security: limit payload size
-    maxHttpBufferSize: 1e6, // 1MB max
+    maxHttpBufferSize: 1e6,
   });
 
   // Connection rate limiting middleware

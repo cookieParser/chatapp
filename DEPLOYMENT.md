@@ -1,32 +1,134 @@
 # Production Deployment Guide
 
-This guide covers deploying the chat application with:
-- **Next.js frontend** → Vercel
-- **Socket.IO server** → Railway or Render
-- **Database** → MongoDB Atlas
+This guide covers deploying the chat application with multiple options:
+- **Option 1**: Vercel + Railway/Render (Serverless)
+- **Option 2**: Docker + Jenkins CI/CD (Self-hosted)
 
 ## Architecture Overview
 
-Since Vercel doesn't support WebSockets natively, we need to split the deployment:
-1. Next.js app on Vercel (handles HTTP requests, SSR, API routes)
-2. Standalone Socket.IO server on Railway/Render (handles real-time WebSocket connections)
-
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│     Vercel      │     │  Railway/Render  │     │  MongoDB Atlas  │
+│   Web Server    │     │  Socket Server   │     │  MongoDB Atlas  │
 │   (Next.js)     │────▶│  (Socket.IO)     │────▶│   (Database)    │
 │   HTTP/SSR      │     │   WebSockets     │     │                 │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
-        │                        │
-        └────────────────────────┘
-                    │
-              ┌─────▼─────┐
-              │  Client   │
-              │  Browser  │
-              └───────────┘
 ```
 
 ---
+
+## Option 1: Docker + Jenkins (Recommended for Production)
+
+### Quick Start with Docker
+
+```bash
+# Development
+docker-compose -f docker-compose.dev.yml up
+
+# Production
+docker-compose up -d
+```
+
+### Docker Files
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Production Next.js app |
+| `Dockerfile.socket` | Socket.IO server |
+| `Dockerfile.dev` | Development with hot reload |
+| `docker-compose.yml` | Production orchestration |
+| `docker-compose.dev.yml` | Development orchestration |
+
+### Setup Steps
+
+1. **Copy environment file**:
+   ```bash
+   cp .env.docker.example .env
+   # Edit .env with your values
+   ```
+
+2. **Build and run**:
+   ```bash
+   docker-compose up --build -d
+   ```
+
+3. **View logs**:
+   ```bash
+   docker-compose logs -f
+   ```
+
+4. **Stop**:
+   ```bash
+   docker-compose down
+   ```
+
+### Jenkins CI/CD Pipeline
+
+#### Prerequisites
+- Jenkins server with Docker installed
+- Docker registry (Docker Hub, GitHub Container Registry, or private)
+- SSH access to deployment server
+
+#### Jenkins Setup
+
+1. **Install Jenkins plugins**:
+   - Docker Pipeline
+   - SSH Agent
+   - Credentials Binding
+
+2. **Add credentials in Jenkins**:
+   - `docker-credentials`: Docker registry username/password
+   - `docker-registry-url`: Your registry URL (e.g., `ghcr.io`)
+   - `deploy-server-ssh`: SSH key for deployment server
+
+3. **Create Pipeline Job**:
+   - New Item → Pipeline
+   - Pipeline from SCM → Git
+   - Script Path: `Jenkinsfile`
+
+#### Pipeline Stages
+
+```
+Checkout → Install → Lint → Test → Build Images → Push → Deploy
+```
+
+The `Jenkinsfile` includes:
+- Parallel Docker builds for web and socket
+- Automatic deployment to staging (develop branch)
+- Manual approval for production (main branch)
+- Image tagging with build number and git commit
+
+#### Deployment Server Setup
+
+On your production server:
+
+```bash
+# Create app directory
+sudo mkdir -p /opt/chatapp
+sudo chown deploy:deploy /opt/chatapp
+
+# Copy docker-compose.yml and .env
+cd /opt/chatapp
+# ... copy files ...
+
+# Pull and run
+docker-compose pull
+docker-compose up -d
+```
+
+### GitHub Actions Alternative
+
+If you prefer GitHub Actions over Jenkins, the workflow is in `.github/workflows/docker-build.yml`.
+
+Add these secrets to your GitHub repository:
+- `DEPLOY_HOST`: Server IP/hostname
+- `DEPLOY_USER`: SSH username
+- `DEPLOY_SSH_KEY`: SSH private key
+- `NEXT_PUBLIC_SOCKET_URL`: Socket server URL
+- `NEXT_PUBLIC_VAPID_PUBLIC_KEY`: VAPID public key
+
+---
+
+## Option 2: Vercel + Railway/Render (Serverless)
 
 ## 1. MongoDB Atlas Setup
 

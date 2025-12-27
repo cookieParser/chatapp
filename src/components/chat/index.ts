@@ -4,3 +4,6 @@ export { MessageInput } from './MessageInput';
 export { ChatHeader } from './ChatHeader';
 export { ChatRoom } from './ChatRoom';
 export { MediaPreview } from './MediaPreview';
+export { ChatTabs } from './ChatTabs';
+export { ConversationList } from './ConversationList';
+export { MultiChatContainer } from './MultiChatContainer';

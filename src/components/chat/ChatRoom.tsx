@@ -61,11 +61,14 @@ export function ChatRoom({ channelId, groupId, type }: ChatRoomProps) {
         const userData = userRes.ok ? await userRes.json() : null;
         const mongoUserId = userData?.id || session.user.id;
 
-        const newSocket = io('https://chatapp-socket-r8n6.onrender.com', {
+        const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+        
+        const newSocket = io(socketUrl, {
           auth: {
             userId: mongoUserId,
             username: session.user.name || session.user.email,
           },
+          transports: ['websocket', 'polling'],
         });
 
         newSocket.on('connect', () => {

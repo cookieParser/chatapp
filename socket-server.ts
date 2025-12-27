@@ -19,12 +19,13 @@ const httpServer = createServer((req, res) => {
     return;
   }
   
-  // CORS preflight
+  // CORS preflight - allow all origins for socket.io
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': process.env.NEXT_PUBLIC_APP_URL || '*',
+      'Access-Control-Allow-Origin': req.headers.origin || '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Credentials': 'true',
     });
     res.end();
     return;

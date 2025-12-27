@@ -4,3 +4,6 @@ export type { UserPresence, UserStatus } from './presenceStore';
 
 export { useNotificationStore } from './notificationStore';
 export type { UnreadCount } from './notificationStore';
+
+export { useChatStore } from './chatStore';
+export type { ChatTab } from './chatStore';

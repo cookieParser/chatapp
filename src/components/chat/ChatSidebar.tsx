@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useSession, signOut } from 'next-auth/react';
-import { Hash, Users, Plus, LogOut, Settings, Search, ChevronDown, BellOff } from 'lucide-react';
+import { Hash, Users, Plus, LogOut, Settings, Search, ChevronDown, BellOff, MessageCircle } from 'lucide-react';
 import { useNotificationStore } from '@/store/notificationStore';
+import { useChatStore } from '@/store/chatStore';
 import { UnreadBadge } from '@/components/notifications';
 
 interface GroupData {
@@ -23,13 +24,41 @@ interface User {
   image?: string;
 }
 
+interface Participant {
+  user: {
+    _id: string;
+    name: string;
+    email: string;
+    image?: string;
+    status?: string;
+  };
+  role: string;
+  isActive: boolean;
+}
+
+interface Conversation {
+  _id: string;
+  type: 'direct' | 'group';
+  name?: string;
+  image?: string;
+  participants: Participant[];
+  lastMessage?: {
+    content: string;
+    createdAt: string;
+  };
+  lastMessageAt?: string;
+}
+
 export function ChatSidebar() {
   const { data: session, status } = useSession();
-  const [activeTab, setActiveTab] = useState<'channels' | 'groups'>('channels');
+  const [activeTab, setActiveTab] = useState<'chats' | 'channels' | 'groups'>('chats');
   const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [showNewChat, setShowNewChat] = useState(false);
   const [groups, setGroups] = useState<GroupData[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<User[]>([]);
+  const { openChat } = useChatStore();
   
   // Form state
   const [groupName, setGroupName] = useState('');
@@ -37,6 +66,7 @@ export function ChatSidebar() {
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [newChatSearchQuery, setNewChatSearchQuery] = useState('');
 
   const fetchGroups = useCallback(async () => {
     if (status !== 'authenticated') return;
@@ -50,6 +80,18 @@ export function ChatSidebar() {
       console.error('Failed to fetch groups:', error);
     } finally {
       setLoading(false);
+    }
+  }, [status]);
+
+  const fetchConversations = useCallback(async () => {
+    if (status !== 'authenticated') return;
+    try {
+      const res = await fetch('/api/conversations');
+      if (res.ok) {
+        setConversations(await res.json());
+      }
+    } catch (error) {
+      console.error('Failed to fetch conversations:', error);
     }
   }, [status]);
 
@@ -70,8 +112,9 @@ export function ChatSidebar() {
     if (status === 'authenticated') {
       fetchGroups();
       fetchUsers();
+      fetchConversations();
     }
-  }, [status, fetchGroups, fetchUsers]);
+  }, [status, fetchGroups, fetchUsers, fetchConversations]);
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,6 +154,39 @@ export function ChatSidebar() {
     setSearchQuery('');
   };
 
+  const closeNewChatModal = () => {
+    setShowNewChat(false);
+    setNewChatSearchQuery('');
+  };
+
+  const handleStartDirectChat = async (user: User) => {
+    try {
+      const res = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'direct',
+          participantIds: [user.id],
+        }),
+      });
+      
+      if (res.ok) {
+        const conversation = await res.json();
+        openChat({
+          id: conversation._id || conversation.id,
+          type: 'direct',
+          name: user.name,
+          image: user.image,
+          participantId: user.id,
+        });
+        closeNewChatModal();
+        fetchConversations(); // Refresh the list
+      }
+    } catch (error) {
+      console.error('Failed to start chat:', error);
+    }
+  };
+
   const toggleMember = (userId: string) => {
     setSelectedMembers((prev) =>
       prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
@@ -121,6 +197,65 @@ export function ChatSidebar() {
   const getGroupName = (g: GroupData) => g.metadata?.name || 'Unnamed';
   const getMemberCount = (g: GroupData) => g.members?.length || 0;
 
+  const getConversationName = (conv: Conversation): string => {
+    if (conv.name) return conv.name;
+    if (conv.type === 'direct') {
+      const otherParticipant = conv.participants.find(
+        p => p.user.email !== session?.user?.email
+      );
+      return otherParticipant?.user.name || 'Unknown';
+    }
+    return 'Unnamed Conversation';
+  };
+
+  const getConversationImage = (conv: Conversation): string | undefined => {
+    if (conv.image) return conv.image;
+    if (conv.type === 'direct') {
+      const otherParticipant = conv.participants.find(
+        p => p.user.email !== session?.user?.email
+      );
+      return otherParticipant?.user.image;
+    }
+    return undefined;
+  };
+
+  const handleOpenConversation = (conv: Conversation) => {
+    openChat({
+      id: conv._id,
+      type: conv.type === 'direct' ? 'direct' : 'group',
+      name: getConversationName(conv),
+      image: getConversationImage(conv),
+    });
+  };
+
+  const handleOpenChannel = (name: string) => {
+    openChat({
+      id: name,
+      type: 'channel',
+      name,
+    });
+  };
+
+  const handleOpenGroup = (group: GroupData) => {
+    openChat({
+      id: getGroupId(group),
+      type: 'group',
+      name: getGroupName(group),
+      image: group.metadata?.avatarUrl,
+    });
+  };
+
+  const formatTime = (dateString?: string) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    if (diff < 60000) return 'now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+    return date.toLocaleDateString();
+  };
+
   const initials = session?.user?.name
     ?.split(' ')
     .map((n) => n[0])
@@ -129,6 +264,10 @@ export function ChatSidebar() {
 
   const filteredUsers = availableUsers.filter((u) =>
     u.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const newChatFilteredUsers = availableUsers.filter((u) =>
+    u.name.toLowerCase().includes(newChatSearchQuery.toLowerCase())
   );
 
   return (
@@ -143,6 +282,17 @@ export function ChatSidebar() {
 
         {/* Tab Navigation */}
         <div className="flex gap-1 p-2 mx-2 mt-2 bg-gray-800/50 rounded-lg">
+          <button
+            onClick={() => setActiveTab('chats')}
+            className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all ${
+              activeTab === 'chats'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+            }`}
+          >
+            <MessageCircle className="h-4 w-4" />
+            Chats
+          </button>
           <button
             onClick={() => setActiveTab('channels')}
             className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all ${
@@ -169,7 +319,39 @@ export function ChatSidebar() {
 
         {/* Content */}
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {activeTab === 'channels' ? (
+          {activeTab === 'chats' ? (
+            <>
+              <div className="flex items-center justify-between px-2 py-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Recent Chats
+                </span>
+                <button
+                  onClick={() => setShowNewChat(true)}
+                  className="p-1 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+                  title="Start new chat"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </div>
+              {conversations.length === 0 ? (
+                <div className="text-center py-8 px-4">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-800 flex items-center justify-center">
+                    <MessageCircle className="h-8 w-8 text-gray-600" />
+                  </div>
+                  <p className="text-gray-400 text-sm">No conversations yet</p>
+                </div>
+              ) : (
+                conversations.map((conv) => (
+                  <ConversationItem
+                    key={conv._id}
+                    conversation={conv}
+                    currentUserEmail={session?.user?.email}
+                    onClick={() => handleOpenConversation(conv)}
+                  />
+                ))
+              )}
+            </>
+          ) : activeTab === 'channels' ? (
             <>
               <div className="flex items-center justify-between px-2 py-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">
@@ -177,10 +359,10 @@ export function ChatSidebar() {
                 </span>
                 <ChevronDown className="h-4 w-4 text-gray-500" />
               </div>
-              <ChannelItem name="general" active />
-              <ChannelItem name="random" />
-              <ChannelItem name="announcements" />
-              <ChannelItem name="help" />
+              <ChannelItem name="general" onClick={() => handleOpenChannel('general')} />
+              <ChannelItem name="random" onClick={() => handleOpenChannel('random')} />
+              <ChannelItem name="announcements" onClick={() => handleOpenChannel('announcements')} />
+              <ChannelItem name="help" onClick={() => handleOpenChannel('help')} />
             </>
           ) : (
             <>
@@ -223,6 +405,7 @@ export function ChatSidebar() {
                     name={getGroupName(group)}
                     memberCount={getMemberCount(group)}
                     avatarUrl={group.metadata?.avatarUrl}
+                    onClick={() => handleOpenGroup(group)}
                   />
                 ))
               )}
@@ -390,23 +573,99 @@ export function ChatSidebar() {
           </div>
         </div>
       )}
+
+      {/* New Chat Modal */}
+      {showNewChat && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={closeNewChatModal}
+        >
+          <div
+            className="w-full max-w-md mx-4 bg-gray-900 rounded-2xl shadow-2xl border border-gray-800 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-800 bg-gradient-to-r from-blue-600/10 to-purple-600/10">
+              <h2 className="text-xl font-semibold text-white">New Chat</h2>
+              <p className="text-sm text-gray-400 mt-1">Start a conversation with someone</p>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6">
+              {/* Search */}
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+                <input
+                  type="text"
+                  value={newChatSearchQuery}
+                  onChange={(e) => setNewChatSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  placeholder="Search users..."
+                  autoFocus
+                />
+              </div>
+
+              {/* User List */}
+              <div className="max-h-80 overflow-y-auto rounded-xl border border-gray-700 bg-gray-800/50">
+                {newChatFilteredUsers.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-sm text-gray-500">
+                    {newChatSearchQuery ? 'No users found' : 'No users available'}
+                  </p>
+                ) : (
+                  newChatFilteredUsers.map((user) => (
+                    <button
+                      key={user.id}
+                      onClick={() => handleStartDirectChat(user)}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-700/50 transition-colors text-left"
+                    >
+                      {user.image ? (
+                        <img src={user.image} alt={user.name} className="h-10 w-10 rounded-full" />
+                      ) : (
+                        <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-semibold text-white">
+                          {user.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{user.name}</p>
+                        <p className="text-xs text-gray-500">Click to start chatting</p>
+                      </div>
+                      <MessageCircle className="h-5 w-5 text-gray-500" />
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {/* Cancel Button */}
+              <button
+                onClick={closeNewChatModal}
+                className="w-full mt-4 px-4 py-3 rounded-xl text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-function ChannelItem({ name, active }: { name: string; active?: boolean }) {
+function ChannelItem({ name, active, onClick }: { name: string; active?: boolean; onClick?: () => void }) {
+  const { activeTabId } = useChatStore();
+  const isActive = active || activeTabId === name;
+  
   return (
-    <a
-      href={`/channel/${name}`}
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-        active
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+        isActive
           ? 'bg-gray-800 text-white'
           : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
       }`}
     >
       <Hash className="h-5 w-5 text-gray-500" />
       <span className="text-sm font-medium">{name}</span>
-    </a>
+    </button>
   );
 }
 
@@ -415,20 +674,28 @@ function GroupItem({
   name,
   memberCount,
   avatarUrl,
+  onClick,
 }: {
   id: string;
   name: string;
   memberCount: number;
   avatarUrl?: string;
+  onClick?: () => void;
 }) {
   const { unreadCounts, mutedConversations } = useNotificationStore();
+  const { activeTabId } = useChatStore();
   const unreadCount = unreadCounts.get(id) || 0;
   const isMuted = mutedConversations.has(id);
+  const isActive = activeTabId === id;
 
   return (
-    <a
-      href={`/group/${id}`}
-      className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800/50 transition-colors"
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+        isActive
+          ? 'bg-gray-800 text-white'
+          : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+      }`}
     >
       {avatarUrl ? (
         <img src={avatarUrl} alt={name} className="h-9 w-9 rounded-lg object-cover" />
@@ -437,7 +704,7 @@ function GroupItem({
           {name.charAt(0).toUpperCase()}
         </div>
       )}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 text-left">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium truncate">{name}</p>
           {isMuted && <BellOff className="h-3 w-3 text-gray-500" />}
@@ -449,6 +716,97 @@ function GroupItem({
       {unreadCount > 0 && !isMuted && (
         <UnreadBadge count={unreadCount} size="sm" />
       )}
-    </a>
+    </button>
+  );
+}
+
+
+function ConversationItem({
+  conversation,
+  currentUserEmail,
+  onClick,
+}: {
+  conversation: Conversation;
+  currentUserEmail?: string | null;
+  onClick: () => void;
+}) {
+  const { unreadCounts, mutedConversations } = useNotificationStore();
+  const { activeTabId } = useChatStore();
+  const unreadCount = unreadCounts.get(conversation._id) || 0;
+  const isMuted = mutedConversations.has(conversation._id);
+  const isActive = activeTabId === conversation._id;
+
+  const getName = (): string => {
+    if (conversation.name) return conversation.name;
+    if (conversation.type === 'direct') {
+      const otherParticipant = conversation.participants.find(
+        p => p.user.email !== currentUserEmail
+      );
+      return otherParticipant?.user.name || 'Unknown';
+    }
+    return 'Unnamed';
+  };
+
+  const getImage = (): string | undefined => {
+    if (conversation.image) return conversation.image;
+    if (conversation.type === 'direct') {
+      const otherParticipant = conversation.participants.find(
+        p => p.user.email !== currentUserEmail
+      );
+      return otherParticipant?.user.image;
+    }
+    return undefined;
+  };
+
+  const formatTime = (dateString?: string) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    if (diff < 60000) return 'now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+    return date.toLocaleDateString();
+  };
+
+  const name = getName();
+  const image = getImage();
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+        isActive
+          ? 'bg-gray-800 text-white'
+          : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+      }`}
+    >
+      {image ? (
+        <img src={image} alt={name} className="h-10 w-10 rounded-full object-cover flex-shrink-0" />
+      ) : (
+        <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-semibold text-white flex-shrink-0">
+          {conversation.type === 'direct' ? name.charAt(0).toUpperCase() : <Users className="h-4 w-4" />}
+        </div>
+      )}
+      <div className="flex-1 min-w-0 text-left">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-medium truncate">{name}</span>
+            {isMuted && <BellOff className="h-3 w-3 text-gray-500 flex-shrink-0" />}
+          </div>
+          <span className="text-xs text-gray-500 flex-shrink-0">
+            {formatTime(conversation.lastMessageAt)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-0.5">
+          <p className="text-xs text-gray-500 truncate">
+            {conversation.lastMessage?.content || 'No messages yet'}
+          </p>
+          {unreadCount > 0 && !isMuted && (
+            <UnreadBadge count={unreadCount} size="sm" />
+          )}
+        </div>
+      </div>
+    </button>
   );
 }
