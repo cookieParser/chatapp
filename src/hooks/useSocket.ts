@@ -103,10 +103,8 @@ export function useSocket(options: UseSocketOptions) {
   useEffect(() => {
     if (!userId || !username) return;
 
-    // Use separate socket server URL in production, same origin in development
-    const socketUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://chatapp-socket-r8n6.onrender.com'
-      : undefined;
+    // Use separate socket server URL in production
+    const socketUrl = 'https://chatapp-socket-r8n6.onrender.com';
     
     const socket: SocketClient = io(socketUrl, {
       auth: { userId, username },
