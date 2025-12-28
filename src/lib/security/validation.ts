@@ -4,8 +4,8 @@
 
 import { MESSAGE_CONFIG } from '@/lib/constants';
 
-// MongoDB ObjectId pattern
-const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
+// MongoDB ObjectId pattern (24 hex characters)
+const OBJECT_ID_REGEX = /^[a-f0-9]{24}$/i;
 
 // UUID pattern
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -201,14 +201,14 @@ export function validateSendMessagePayload(data: unknown): ValidationResult & { 
  * Validate pagination parameters
  */
 export function validatePagination(limit: unknown, offset: unknown): ValidationResult {
-  if (limit !== undefined) {
+  if (limit !== undefined && limit !== null) {
     const limitNum = Number(limit);
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
       return { valid: false, error: 'Limit must be between 1 and 100' };
     }
   }
   
-  if (offset !== undefined) {
+  if (offset !== undefined && offset !== null) {
     const offsetNum = Number(offset);
     if (isNaN(offsetNum) || offsetNum < 0) {
       return { valid: false, error: 'Offset must be a non-negative number' };

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useSession, signOut } from 'next-auth/react';
-import { Hash, Users, Plus, LogOut, Settings, Search, ChevronDown, BellOff, MessageCircle } from 'lucide-react';
+import { Users, Plus, LogOut, Settings, Search, BellOff, MessageCircle, Code2 } from 'lucide-react';
 import { useNotificationStore } from '@/store/notificationStore';
 import { useChatStore } from '@/store/chatStore';
 import { UnreadBadge } from '@/components/notifications';
@@ -15,12 +15,13 @@ interface GroupData {
     description?: string;
     avatarUrl?: string;
   };
-  members?: any[];
+  members?: unknown[];
 }
 
 interface User {
   id: string;
   name: string;
+  email?: string;
   image?: string;
 }
 
@@ -49,15 +50,20 @@ interface Conversation {
   lastMessageAt?: string;
 }
 
+const DEV_EMAIL = process.env.NEXT_PUBLIC_DEV_EMAIL || 'demo@example.com';
+const DEV_NAME = 'Developer';
+
 export function ChatSidebar() {
   const { data: session, status } = useSession();
-  const [activeTab, setActiveTab] = useState<'chats' | 'channels' | 'groups'>('chats');
+  const [activeTab, setActiveTab] = useState<'chats' | 'groups'>('chats');
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
   const [groups, setGroups] = useState<GroupData[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<User[]>([]);
+  const [devUser, setDevUser] = useState<User | null>(null);
+  const [startingDevChat, setStartingDevChat] = useState(false);
   const { openChat } = useChatStore();
   
   // Form state
@@ -67,6 +73,8 @@ export function ChatSidebar() {
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [newChatSearchQuery, setNewChatSearchQuery] = useState('');
+
+  const isDevUser = session?.user?.email === DEV_EMAIL;
 
   const fetchGroups = useCallback(async () => {
     if (status !== 'authenticated') return;
@@ -101,7 +109,14 @@ export function ChatSidebar() {
       const res = await fetch('/api/users');
       if (res.ok) {
         const users = await res.json();
-        setAvailableUsers(users.filter((u: User) => u.id !== session?.user?.id));
+        const filteredUsers = users.filter((u: User) => u.id !== session?.user?.id);
+        setAvailableUsers(filteredUsers);
+        
+        // Find the dev user
+        const dev = users.find((u: User) => u.email === DEV_EMAIL);
+        if (dev && dev.id !== session?.user?.id) {
+          setDevUser(dev);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch users:', error);
@@ -115,6 +130,38 @@ export function ChatSidebar() {
       fetchConversations();
     }
   }, [status, fetchGroups, fetchUsers, fetchConversations]);
+
+  const handleChatWithDev = async () => {
+    if (!devUser) {
+      alert('Developer account not found. Please try again later.');
+      return;
+    }
+    
+    setStartingDevChat(true);
+    try {
+      const res = await fetch('/api/conversations/direct', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId: devUser.id }),
+      });
+      
+      if (res.ok) {
+        const { conversationId } = await res.json();
+        openChat({
+          id: conversationId,
+          type: 'direct',
+          name: 'Chat with Dev',
+          image: devUser.image,
+          participantId: devUser.id,
+        });
+        fetchConversations();
+      }
+    } catch (error) {
+      console.error('Failed to start chat with dev:', error);
+    } finally {
+      setStartingDevChat(false);
+    }
+  };
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,7 +227,7 @@ export function ChatSidebar() {
           participantId: user.id,
         });
         closeNewChatModal();
-        fetchConversations(); // Refresh the list
+        fetchConversations();
       }
     } catch (error) {
       console.error('Failed to start chat:', error);
@@ -203,6 +250,10 @@ export function ChatSidebar() {
       const otherParticipant = conv.participants.find(
         p => p.user.email !== session?.user?.email
       );
+      // Check if this is a chat with dev
+      if (otherParticipant?.user.email === DEV_EMAIL) {
+        return 'Chat with Dev';
+      }
       return otherParticipant?.user.name || 'Unknown';
     }
     return 'Unnamed Conversation';
@@ -220,6 +271,9 @@ export function ChatSidebar() {
   };
 
   const handleOpenConversation = (conv: Conversation) => {
+    // Mark as read when opening
+    markConversationAsRead(conv._id);
+    
     openChat({
       id: conv._id,
       type: conv.type === 'direct' ? 'direct' : 'group',
@@ -228,12 +282,16 @@ export function ChatSidebar() {
     });
   };
 
-  const handleOpenChannel = (name: string) => {
-    openChat({
-      id: name,
-      type: 'channel',
-      name,
-    });
+  const markConversationAsRead = async (conversationId: string) => {
+    try {
+      await fetch(`/api/notifications/read/${conversationId}`, {
+        method: 'POST',
+      });
+      // Clear unread count locally
+      useNotificationStore.getState().clearUnread(conversationId);
+    } catch (error) {
+      console.error('Failed to mark as read:', error);
+    }
   };
 
   const handleOpenGroup = (group: GroupData) => {
@@ -243,17 +301,6 @@ export function ChatSidebar() {
       name: getGroupName(group),
       image: group.metadata?.avatarUrl,
     });
-  };
-
-  const formatTime = (dateString?: string) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    if (diff < 60000) return 'now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
-    return date.toLocaleDateString();
   };
 
   const initials = session?.user?.name
@@ -280,8 +327,42 @@ export function ChatSidebar() {
           </h1>
         </div>
 
+        {/* Chat with Dev Button - Shows for all users except the dev */}
+        {status === 'authenticated' && !isDevUser && (
+          <div className="px-3 pt-3">
+            <button
+              onClick={handleChatWithDev}
+              disabled={startingDevChat || !devUser}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-600/20"
+            >
+              <div className="p-2 rounded-lg bg-white/10">
+                <Code2 className="h-5 w-5" />
+              </div>
+              <div className="text-left">
+                <p className="font-semibold">{startingDevChat ? 'Starting...' : 'Chat with Dev'}</p>
+                <p className="text-xs text-blue-200">Get help or say hi!</p>
+              </div>
+            </button>
+          </div>
+        )}
+
+        {/* Admin Dashboard - Shows only for dev */}
+        {status === 'authenticated' && isDevUser && (
+          <div className="px-3 pt-3">
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border border-amber-500/30">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 shadow-lg shadow-amber-500/30">
+                <Code2 className="h-5 w-5 text-white" />
+              </div>
+              <div className="text-left">
+                <p className="font-semibold text-amber-400">Admin Dashboard</p>
+                <p className="text-xs text-amber-300/70">Manage user conversations</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Tab Navigation */}
-        <div className="flex gap-1 p-2 mx-2 mt-2 bg-gray-800/50 rounded-lg">
+        <div className="flex gap-1 p-2 mx-2 mt-3 bg-gray-800/50 rounded-lg">
           <button
             onClick={() => setActiveTab('chats')}
             className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all ${
@@ -292,17 +373,6 @@ export function ChatSidebar() {
           >
             <MessageCircle className="h-4 w-4" />
             Chats
-          </button>
-          <button
-            onClick={() => setActiveTab('channels')}
-            className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all ${
-              activeTab === 'channels'
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-            }`}
-          >
-            <Hash className="h-4 w-4" />
-            Channels
           </button>
           <button
             onClick={() => setActiveTab('groups')}
@@ -350,19 +420,6 @@ export function ChatSidebar() {
                   />
                 ))
               )}
-            </>
-          ) : activeTab === 'channels' ? (
-            <>
-              <div className="flex items-center justify-between px-2 py-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Channels
-                </span>
-                <ChevronDown className="h-4 w-4 text-gray-500" />
-              </div>
-              <ChannelItem name="general" onClick={() => handleOpenChannel('general')} />
-              <ChannelItem name="random" onClick={() => handleOpenChannel('random')} />
-              <ChannelItem name="announcements" onClick={() => handleOpenChannel('announcements')} />
-              <ChannelItem name="help" onClick={() => handleOpenChannel('help')} />
             </>
           ) : (
             <>
@@ -460,13 +517,11 @@ export function ChatSidebar() {
             className="w-full max-w-md mx-4 bg-gray-900 rounded-2xl shadow-2xl border border-gray-800 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
             <div className="px-6 py-4 border-b border-gray-800 bg-gradient-to-r from-blue-600/10 to-purple-600/10">
               <h2 className="text-xl font-semibold text-white">Create New Group</h2>
               <p className="text-sm text-gray-400 mt-1">Bring people together</p>
             </div>
 
-            {/* Modal Body */}
             <form onSubmit={handleCreateGroup} className="p-6 space-y-5">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -504,7 +559,6 @@ export function ChatSidebar() {
                   </span>
                 </label>
                 
-                {/* Search */}
                 <div className="relative mb-3">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
                   <input
@@ -516,7 +570,6 @@ export function ChatSidebar() {
                   />
                 </div>
 
-                {/* User List */}
                 <div className="max-h-48 overflow-y-auto rounded-xl border border-gray-700 bg-gray-800/50">
                   {filteredUsers.length === 0 ? (
                     <p className="px-4 py-6 text-center text-sm text-gray-500">
@@ -552,7 +605,6 @@ export function ChatSidebar() {
                 </div>
               </div>
 
-              {/* Actions */}
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
@@ -584,15 +636,12 @@ export function ChatSidebar() {
             className="w-full max-w-md mx-4 bg-gray-900 rounded-2xl shadow-2xl border border-gray-800 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
             <div className="px-6 py-4 border-b border-gray-800 bg-gradient-to-r from-blue-600/10 to-purple-600/10">
               <h2 className="text-xl font-semibold text-white">New Chat</h2>
               <p className="text-sm text-gray-400 mt-1">Start a conversation with someone</p>
             </div>
 
-            {/* Modal Body */}
             <div className="p-6">
-              {/* Search */}
               <div className="relative mb-4">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
                 <input
@@ -605,7 +654,6 @@ export function ChatSidebar() {
                 />
               </div>
 
-              {/* User List */}
               <div className="max-h-80 overflow-y-auto rounded-xl border border-gray-700 bg-gray-800/50">
                 {newChatFilteredUsers.length === 0 ? (
                   <p className="px-4 py-8 text-center text-sm text-gray-500">
@@ -635,7 +683,6 @@ export function ChatSidebar() {
                 )}
               </div>
 
-              {/* Cancel Button */}
               <button
                 onClick={closeNewChatModal}
                 className="w-full mt-4 px-4 py-3 rounded-xl text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 transition-colors"
@@ -647,25 +694,6 @@ export function ChatSidebar() {
         </div>
       )}
     </>
-  );
-}
-
-function ChannelItem({ name, active, onClick }: { name: string; active?: boolean; onClick?: () => void }) {
-  const { activeTabId } = useChatStore();
-  const isActive = active || activeTabId === name;
-  
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-        isActive
-          ? 'bg-gray-800 text-white'
-          : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
-      }`}
-    >
-      <Hash className="h-5 w-5 text-gray-500" />
-      <span className="text-sm font-medium">{name}</span>
-    </button>
   );
 }
 
@@ -720,7 +748,6 @@ function GroupItem({
   );
 }
 
-
 function ConversationItem({
   conversation,
   currentUserEmail,
@@ -742,6 +769,9 @@ function ConversationItem({
       const otherParticipant = conversation.participants.find(
         p => p.user.email !== currentUserEmail
       );
+      if (otherParticipant?.user.email === DEV_EMAIL) {
+        return 'Chat with Dev';
+      }
       return otherParticipant?.user.name || 'Unknown';
     }
     return 'Unnamed';
@@ -757,6 +787,9 @@ function ConversationItem({
     }
     return undefined;
   };
+
+  const isDevChat = conversation.type === 'direct' && 
+    conversation.participants.some(p => p.user.email === DEV_EMAIL);
 
   const formatTime = (dateString?: string) => {
     if (!dateString) return '';
@@ -782,31 +815,39 @@ function ConversationItem({
       }`}
     >
       {image ? (
-        <img src={image} alt={name} className="h-10 w-10 rounded-full object-cover flex-shrink-0" />
+        <img src={image} alt={name} className="h-10 w-10 rounded-full object-cover" />
       ) : (
-        <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-semibold text-white flex-shrink-0">
-          {conversation.type === 'direct' ? name.charAt(0).toUpperCase() : <Users className="h-4 w-4" />}
+        <div className={`h-10 w-10 rounded-full flex items-center justify-center text-sm font-semibold text-white ${
+          isDevChat 
+            ? 'bg-gradient-to-br from-blue-600 to-purple-600' 
+            : 'bg-gradient-to-br from-gray-600 to-gray-700'
+        }`}>
+          {isDevChat ? <Code2 className="h-5 w-5" /> : name.charAt(0).toUpperCase()}
         </div>
       )}
       <div className="flex-1 min-w-0 text-left">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-medium truncate">{name}</span>
-            {isMuted && <BellOff className="h-3 w-3 text-gray-500 flex-shrink-0" />}
-          </div>
-          <span className="text-xs text-gray-500 flex-shrink-0">
-            {formatTime(conversation.lastMessageAt)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-2 mt-0.5">
-          <p className="text-xs text-gray-500 truncate">
-            {conversation.lastMessage?.content || 'No messages yet'}
-          </p>
-          {unreadCount > 0 && !isMuted && (
-            <UnreadBadge count={unreadCount} size="sm" />
+          <p className="text-sm font-medium truncate">{name}</p>
+          {conversation.lastMessageAt && (
+            <span className="text-xs text-gray-500 flex-shrink-0">
+              {formatTime(conversation.lastMessageAt)}
+            </span>
           )}
         </div>
+        <div className="flex items-center gap-2">
+          {conversation.lastMessage ? (
+            <p className="text-xs text-gray-500 truncate">
+              {conversation.lastMessage.content}
+            </p>
+          ) : (
+            <p className="text-xs text-gray-500 italic">No messages yet</p>
+          )}
+          {isMuted && <BellOff className="h-3 w-3 text-gray-500 flex-shrink-0" />}
+        </div>
       </div>
+      {unreadCount > 0 && !isMuted && (
+        <UnreadBadge count={unreadCount} size="sm" />
+      )}
     </button>
   );
 }

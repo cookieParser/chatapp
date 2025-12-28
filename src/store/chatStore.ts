@@ -18,6 +18,8 @@ interface ChatState {
   activeTabId: string | null;
   // Maximum number of tabs allowed
   maxTabs: number;
+  // Mobile sidebar visibility
+  isMobileSidebarOpen: boolean;
 
   // Actions
   openChat: (chat: ChatTab) => void;
@@ -25,6 +27,8 @@ interface ChatState {
   setActiveTab: (chatId: string) => void;
   reorderTabs: (fromIndex: number, toIndex: number) => void;
   clearAllTabs: () => void;
+  toggleMobileSidebar: () => void;
+  setMobileSidebarOpen: (open: boolean) => void;
 }
 
 export const useChatStore = create<ChatState>()(
@@ -33,6 +37,7 @@ export const useChatStore = create<ChatState>()(
       activeTabs: [],
       activeTabId: null,
       maxTabs: 10,
+      isMobileSidebarOpen: false,
 
       openChat: (chat) => {
         const state = get();
@@ -41,7 +46,7 @@ export const useChatStore = create<ChatState>()(
         const existingIndex = state.activeTabs.findIndex(t => t.id === chat.id);
         if (existingIndex !== -1) {
           // Just focus the existing tab
-          set({ activeTabId: chat.id });
+          set({ activeTabId: chat.id, isMobileSidebarOpen: false });
           return;
         }
 
@@ -52,7 +57,7 @@ export const useChatStore = create<ChatState>()(
         }
 
         newTabs.push(chat);
-        set({ activeTabs: newTabs, activeTabId: chat.id });
+        set({ activeTabs: newTabs, activeTabId: chat.id, isMobileSidebarOpen: false });
       },
 
       closeChat: (chatId) => {
@@ -95,6 +100,14 @@ export const useChatStore = create<ChatState>()(
       clearAllTabs: () => {
         set({ activeTabs: [], activeTabId: null });
       },
+
+      toggleMobileSidebar: () => {
+        set((state) => ({ isMobileSidebarOpen: !state.isMobileSidebarOpen }));
+      },
+
+      setMobileSidebarOpen: (open) => {
+        set({ isMobileSidebarOpen: open });
+      },
     }),
     {
       name: 'chat-tabs-storage',
@@ -102,6 +115,12 @@ export const useChatStore = create<ChatState>()(
         activeTabs: state.activeTabs,
         activeTabId: state.activeTabId,
       }),
+      // Clear stale data on version change
+      version: 2,
+      migrate: () => {
+        // Clear all tabs on migration to avoid stale conversation IDs
+        return { activeTabs: [], activeTabId: null };
+      },
     }
   )
 );

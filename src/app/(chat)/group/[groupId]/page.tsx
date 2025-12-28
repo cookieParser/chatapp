@@ -3,7 +3,6 @@
 import { use, useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { ChatRoom } from '@/components/chat/ChatRoom';
-import { Settings, Users, UserPlus } from 'lucide-react';
 
 interface GroupPageProps {
   params: Promise<{ groupId: string }>;
@@ -67,6 +66,7 @@ export default function GroupPage({ params }: GroupPageProps) {
   }
 
   const groupName = group.metadata?.name || 'Group Chat';
+  const conversationId = group.conversation || groupId;
 
-  return <ChatRoom groupId={groupId} type="group" />;
+  return <ChatRoom conversationId={conversationId} conversationName={groupName} conversationType="group" />;
 }

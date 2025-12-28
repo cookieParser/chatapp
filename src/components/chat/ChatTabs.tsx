@@ -23,7 +23,7 @@ export function ChatTabs() {
   };
 
   return (
-    <div className="flex items-center gap-1 px-2 py-1 bg-gray-900 border-b border-gray-800 overflow-x-auto scrollbar-thin scrollbar-thumb-gray-700">
+    <div className="flex items-center gap-1 px-2 py-1 bg-gray-900 border-b border-gray-800 overflow-x-auto scrollbar-thin scrollbar-thumb-gray-700 hide-scrollbar">
       {activeTabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         const unreadCount = unreadCounts.get(tab.id) || 0;
@@ -32,13 +32,13 @@ export function ChatTabs() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`group flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all min-w-0 max-w-[200px] ${
+            className={`group flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all min-w-0 max-w-[140px] sm:max-w-[200px] flex-shrink-0 ${
               isActive
                 ? 'bg-gray-800 text-white'
                 : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
             }`}
           >
-            <span className="flex-shrink-0 text-gray-500">
+            <span className="flex-shrink-0 text-gray-500 hidden sm:block">
               {getIcon(tab.type)}
             </span>
             <span className="truncate">{tab.name}</span>

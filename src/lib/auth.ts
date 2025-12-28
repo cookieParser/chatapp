@@ -3,41 +3,7 @@ import Google from 'next-auth/providers/google';
 import Credentials from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import type { UserRole, UserStatus } from '@/types/user';
-
-// Mock user store - replace with your database
-const users: Map<
-  string,
-  {
-    id: string;
-    email: string;
-    username: string;
-    displayName: string;
-    password?: string;
-    avatarUrl?: string;
-    bio?: string;
-    role: UserRole;
-    status: UserStatus;
-    statusMessage?: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }
-> = new Map();
-
-// Seed a demo user
-users.set('demo@example.com', {
-  id: '1',
-  email: 'demo@example.com',
-  username: 'demo',
-  displayName: 'Demo User',
-  password: bcrypt.hashSync('password123', 10),
-  avatarUrl: undefined,
-  bio: 'Hello, I am a demo user!',
-  role: 'user',
-  status: 'online',
-  statusMessage: 'Available',
-  createdAt: new Date(),
-  updatedAt: new Date(),
-});
+import { connectDB, User } from '@/lib/db';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -58,28 +24,35 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         const email = credentials.email as string;
         const password = credentials.password as string;
-        const user = users.get(email);
 
-        if (!user || !user.password) {
+        try {
+          await connectDB();
+          
+          // Find user in MongoDB
+          const user = await User.findOne({ email }).select('+passwordHash');
+          
+          if (!user || !user.passwordHash) {
+            return null;
+          }
+
+          const isValid = await bcrypt.compare(password, user.passwordHash);
+          if (!isValid) {
+            return null;
+          }
+
+          return {
+            id: user._id.toString(),
+            email: user.email,
+            name: user.name,
+            image: user.image,
+            username: user.email.split('@')[0],
+            role: 'user',
+            status: user.status || 'online',
+          };
+        } catch (error) {
+          console.error('Auth error:', error);
           return null;
         }
-
-        const isValid = await bcrypt.compare(password, user.password);
-        if (!isValid) {
-          return null;
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.displayName,
-          image: user.avatarUrl,
-          username: user.username,
-          role: user.role,
-          status: user.status,
-          statusMessage: user.statusMessage,
-          bio: user.bio,
-        };
       },
     }),
   ],
@@ -102,33 +75,39 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.bio = user.bio;
       }
 
-      // Handle Google OAuth - create/update user profile
+      // Handle Google OAuth - create/update user profile in MongoDB
       if (account?.provider === 'google' && user) {
-        const existingUser = users.get(user.email!);
-        if (!existingUser) {
-          const newUser = {
-            id: crypto.randomUUID(),
-            email: user.email!,
-            username: user.email!.split('@')[0],
-            displayName: user.name || 'User',
-            avatarUrl: user.image || undefined,
-            role: 'user' as UserRole,
-            status: 'online' as UserStatus,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
-          users.set(user.email!, newUser);
-          token.id = newUser.id;
-          token.username = newUser.username;
-          token.role = newUser.role;
-          token.status = newUser.status;
-        } else {
-          token.id = existingUser.id;
-          token.username = existingUser.username;
-          token.role = existingUser.role;
-          token.status = existingUser.status;
-          token.statusMessage = existingUser.statusMessage;
-          token.bio = existingUser.bio;
+        try {
+          await connectDB();
+          
+          let dbUser = await User.findOne({ email: user.email });
+          
+          if (!dbUser) {
+            dbUser = await User.create({
+              email: user.email!,
+              name: user.name || 'User',
+              image: user.image || undefined,
+              provider: 'google',
+              status: 'online',
+            });
+          } else {
+            // Update name and image from Google if they changed
+            if (user.name && dbUser.name !== user.name) {
+              dbUser.name = user.name;
+            }
+            if (user.image && dbUser.image !== user.image) {
+              dbUser.image = user.image;
+            }
+            await dbUser.save();
+          }
+          
+          token.id = dbUser._id.toString();
+          token.name = dbUser.name; // Ensure name is in token
+          token.username = dbUser.email.split('@')[0];
+          token.role = 'user';
+          token.status = dbUser.status || 'online';
+        } catch (error) {
+          console.error('Google OAuth DB error:', error);
         }
       }
 
@@ -148,30 +127,34 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
 });
 
-// Helper to register new users
+// Helper to register new users - stores in MongoDB
 export async function registerUser(
   email: string,
   password: string,
   username: string,
   displayName: string
 ) {
-  if (users.has(email)) {
+  await connectDB();
+  
+  const existingUser = await User.findOne({ email });
+  if (existingUser) {
     throw new Error('User already exists');
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
-  const newUser = {
-    id: crypto.randomUUID(),
+  
+  const newUser = await User.create({
     email,
-    username,
-    displayName,
-    password: hashedPassword,
-    role: 'user' as UserRole,
-    status: 'offline' as UserStatus,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+    name: displayName,
+    passwordHash: hashedPassword,
+    provider: 'credentials',
+    status: 'offline',
+  });
 
-  users.set(email, newUser);
-  return { id: newUser.id, email, username, displayName };
+  return { 
+    id: newUser._id.toString(), 
+    email, 
+    username, 
+    displayName 
+  };
 }

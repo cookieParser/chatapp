@@ -5,7 +5,7 @@ import { Button, Input } from '@/components/ui';
 import { useFileUpload } from '@/hooks';
 import { MediaAttachment } from '@/types';
 import { MediaPreview } from './MediaPreview';
-import { Paperclip, Image, Loader2 } from 'lucide-react';
+import { Paperclip, Image, Loader2, Send } from 'lucide-react';
 
 interface MessageInputProps {
   onSendMessage?: (content: string, media?: MediaAttachment) => void;
@@ -55,17 +55,17 @@ export function MessageInput({ onSendMessage }: MessageInputProps) {
   };
 
   return (
-    <div className="border-t border-gray-200 p-4">
+    <div className="border-t border-gray-200 dark:border-gray-800 p-2 sm:p-4">
       {/* Pending media preview */}
       {pendingMedia && (
-        <div className="mb-3">
+        <div className="mb-2 sm:mb-3">
           <MediaPreview media={pendingMedia} onRemove={handleRemoveMedia} showRemove compact />
         </div>
       )}
 
       {/* Upload progress */}
       {uploadState.isUploading && (
-        <div className="mb-3 flex items-center gap-2 text-sm text-gray-500">
+        <div className="mb-2 sm:mb-3 flex items-center gap-2 text-sm text-gray-500">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>Uploading...</span>
         </div>
@@ -73,17 +73,18 @@ export function MessageInput({ onSendMessage }: MessageInputProps) {
 
       {/* Upload error */}
       {uploadState.error && (
-        <div className="mb-3 text-sm text-red-500">
+        <div className="mb-2 sm:mb-3 text-sm text-red-500">
           {uploadState.error}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="flex gap-2">
+      <form onSubmit={handleSubmit} className="flex gap-1 sm:gap-2">
         <input
           ref={fileInputRef}
           type="file"
           onChange={handleFileSelect}
           className="hidden"
+          aria-label="Upload file"
         />
         
         <Button
@@ -92,7 +93,7 @@ export function MessageInput({ onSendMessage }: MessageInputProps) {
           size="sm"
           onClick={() => triggerFileInput(true)}
           disabled={uploadState.isUploading}
-          className="flex-shrink-0"
+          className="flex-shrink-0 p-2 sm:p-2.5"
           title="Upload image"
         >
           <Image className="h-5 w-5" />
@@ -104,7 +105,7 @@ export function MessageInput({ onSendMessage }: MessageInputProps) {
           size="sm"
           onClick={() => triggerFileInput(false)}
           disabled={uploadState.isUploading}
-          className="flex-shrink-0"
+          className="flex-shrink-0 p-2 sm:p-2.5 hidden sm:flex"
           title="Upload file"
         >
           <Paperclip className="h-5 w-5" />
@@ -114,15 +115,17 @@ export function MessageInput({ onSendMessage }: MessageInputProps) {
           value={message}
           onChange={e => setMessage(e.target.value)}
           placeholder="Type a message..."
-          className="flex-1"
+          className="flex-1 text-sm sm:text-base"
           disabled={uploadState.isUploading}
         />
         
         <Button 
           type="submit" 
           disabled={(!message.trim() && !pendingMedia) || uploadState.isUploading}
+          className="flex-shrink-0 px-3 sm:px-4"
         >
-          Send
+          <Send className="h-4 w-4 sm:hidden" />
+          <span className="hidden sm:inline">Send</span>
         </Button>
       </form>
     </div>

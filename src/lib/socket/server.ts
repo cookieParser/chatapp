@@ -237,7 +237,6 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
         return;
       }
       socket.join(`conversation:${conversationId}`);
-      console.log(`${username} joined conversation: ${conversationId}`);
     });
 
     // Handle leaving a conversation room

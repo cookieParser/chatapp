@@ -166,9 +166,17 @@ export async function GET(request: NextRequest) {
       return secureResponse([]);
     }
 
+    // Filter out old default channel conversations
+    const excludedChannelNames = ['general', 'random', 'announcements', 'help'];
+
     const conversations = await Conversation.find({
       'participants.user': dbUser._id,
       'participants.isActive': true,
+      // Exclude old channel-type conversations
+      $or: [
+        { type: 'direct' },
+        { type: 'group', name: { $nin: excludedChannelNames } },
+      ],
     })
       .populate('participants.user', 'name email image status')
       .populate('lastMessage')

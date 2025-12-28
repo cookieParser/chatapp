@@ -10,5 +10,5 @@ interface ChannelPageProps {
 export default function ChannelPage({ params }: ChannelPageProps) {
   const { channelId } = use(params);
   
-  return <ChatRoom channelId={channelId} type="channel" />;
+  return <ChatRoom conversationId={channelId} conversationName="Channel" conversationType="channel" />;
 }

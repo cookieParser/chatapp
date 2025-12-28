@@ -2,8 +2,12 @@
  * Standalone Socket.IO Server for Production Deployment
  * Deploy this to Railway or Render separately from the Next.js app
  */
+import { config } from 'dotenv';
 import { createServer } from 'http';
 import { createSocketServer } from './src/lib/socket';
+
+// Load environment variables from .env.local
+config({ path: '.env.local' });
 
 const port = parseInt(process.env.PORT || '3001', 10);
 

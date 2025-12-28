@@ -64,12 +64,12 @@ export default function RegisterPage() {
   }
 
   const inputClass =
-    'mt-1 block w-full rounded-md border border-gray-600 bg-gray-800 px-3 py-2 text-white placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+    'mt-1 block w-full rounded-md border border-gray-600 bg-gray-800 px-3 py-2.5 sm:py-2 text-white placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 text-base sm:text-sm';
 
   return (
-    <div className="flex min-h-screen items-center justify-center py-8">
-      <div className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-8 shadow-sm">
-        <h1 className="mb-6 text-center text-2xl font-bold text-white">Create Account</h1>
+    <div className="flex min-h-screen items-center justify-center px-4 py-8 sm:px-6 lg:px-8">
+      <div className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 sm:p-8 shadow-sm">
+        <h1 className="mb-6 text-center text-xl sm:text-2xl font-bold text-white">Create Account</h1>
 
         {error && (
           <div className="mb-4 rounded-md bg-red-900/50 p-3 text-sm text-red-400">{error}</div>
@@ -128,7 +128,7 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50"
+            className="w-full rounded-md bg-blue-600 px-4 py-2.5 sm:py-2 text-white font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 transition-colors"
           >
             {loading ? 'Creating account...' : 'Create Account'}
           </button>
@@ -143,7 +143,7 @@ export default function RegisterPage() {
         <button
           onClick={handleGoogleSignup}
           disabled={loading}
-          className="flex w-full items-center justify-center gap-2 rounded-md border border-gray-600 bg-gray-800 px-4 py-2 text-gray-200 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded-md border border-gray-600 bg-gray-800 px-4 py-2.5 sm:py-2 text-gray-200 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 transition-colors"
         >
           <svg className="h-5 w-5" viewBox="0 0 24 24">
             <path

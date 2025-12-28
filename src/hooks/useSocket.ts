@@ -103,8 +103,8 @@ export function useSocket(options: UseSocketOptions) {
   useEffect(() => {
     if (!userId || !username) return;
 
-    // Use separate socket server URL in production
-    const socketUrl = 'https://chatapp-socket-r8n6.onrender.com';
+    // Use environment variable for socket URL, fallback to localhost for dev
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
     
     const socket: SocketClient = io(socketUrl, {
       auth: { userId, username },

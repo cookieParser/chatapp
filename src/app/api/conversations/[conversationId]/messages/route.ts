@@ -69,8 +69,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // Get query params for cursor-based pagination
     const { searchParams } = new URL(request.url);
     const limitParam = searchParams.get('limit');
-    const cursor = searchParams.get('cursor'); // Message ID for cursor
-    const direction = searchParams.get('direction') || 'older'; // 'older' or 'newer'
+    const cursor = searchParams.get('cursor');
+    const direction = searchParams.get('direction') || 'older';
     const includeTotal = searchParams.get('includeTotal') === 'true';
 
     // Validate pagination
