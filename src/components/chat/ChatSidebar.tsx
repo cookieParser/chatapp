@@ -246,26 +246,26 @@ export function ChatSidebar() {
 
   const getConversationName = (conv: Conversation): string => {
     if (conv.name) return conv.name;
-    if (conv.type === 'direct') {
+    if (conv.type === 'direct' && conv.participants) {
       const otherParticipant = conv.participants.find(
-        p => p.user.email !== session?.user?.email
+        p => p?.user?.email && p.user.email !== session?.user?.email
       );
       // Check if this is a chat with dev
-      if (otherParticipant?.user.email === DEV_EMAIL) {
+      if (otherParticipant?.user?.email === DEV_EMAIL) {
         return 'Chat with Dev';
       }
-      return otherParticipant?.user.name || 'Unknown';
+      return otherParticipant?.user?.name || 'Unknown';
     }
     return 'Unnamed Conversation';
   };
 
   const getConversationImage = (conv: Conversation): string | undefined => {
     if (conv.image) return conv.image;
-    if (conv.type === 'direct') {
+    if (conv.type === 'direct' && conv.participants) {
       const otherParticipant = conv.participants.find(
-        p => p.user.email !== session?.user?.email
+        p => p?.user?.email && p.user.email !== session?.user?.email
       );
-      return otherParticipant?.user.image;
+      return otherParticipant?.user?.image;
     }
     return undefined;
   };
@@ -765,31 +765,31 @@ function ConversationItem({
 
   const getName = (): string => {
     if (conversation.name) return conversation.name;
-    if (conversation.type === 'direct') {
+    if (conversation.type === 'direct' && conversation.participants) {
       const otherParticipant = conversation.participants.find(
-        p => p.user.email !== currentUserEmail
+        p => p?.user?.email && p.user.email !== currentUserEmail
       );
-      if (otherParticipant?.user.email === DEV_EMAIL) {
+      if (otherParticipant?.user?.email === DEV_EMAIL) {
         return 'Chat with Dev';
       }
-      return otherParticipant?.user.name || 'Unknown';
+      return otherParticipant?.user?.name || 'Unknown';
     }
     return 'Unnamed';
   };
 
   const getImage = (): string | undefined => {
     if (conversation.image) return conversation.image;
-    if (conversation.type === 'direct') {
+    if (conversation.type === 'direct' && conversation.participants) {
       const otherParticipant = conversation.participants.find(
-        p => p.user.email !== currentUserEmail
+        p => p?.user?.email && p.user.email !== currentUserEmail
       );
-      return otherParticipant?.user.image;
+      return otherParticipant?.user?.image;
     }
     return undefined;
   };
 
   const isDevChat = conversation.type === 'direct' && 
-    conversation.participants.some(p => p.user.email === DEV_EMAIL);
+    conversation.participants?.some(p => p?.user?.email === DEV_EMAIL);
 
   const formatTime = (dateString?: string) => {
     if (!dateString) return '';
