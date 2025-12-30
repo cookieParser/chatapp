@@ -7,6 +7,7 @@ import { io, Socket } from 'socket.io-client';
 import {
   SendMessagePayload,
   MessagePayload,
+  MinimalMessagePayload,
   TypingPayload,
   MessageStatusPayload,
   BatchStatusUpdatePayload,
@@ -97,13 +98,14 @@ describe('Socket Events', () => {
       const onMessage = jest.fn();
       mockSocket.on('message:new', onMessage);
 
-      const message: MessagePayload = {
-        _id: 'msg1',
-        conversation: 'conv1',
-        sender: { _id: 'user1', username: 'testuser' },
+      // Minimal payload - only essential fields
+      const message: MinimalMessagePayload = {
+        messageId: 'msg1',
+        conversationId: 'conv1',
+        senderId: 'user1',
         content: 'Hello',
-        type: 'text',
         createdAt: new Date().toISOString(),
+        type: 'text',
       };
 
       mockSocket._trigger('message:new', message);
@@ -357,13 +359,14 @@ describe('Socket Events', () => {
       mockSocket.on('message:new', handler2);
       mockSocket.off('message:new', handler1);
 
-      const message: MessagePayload = {
-        _id: 'msg1',
-        conversation: 'conv1',
-        sender: { _id: 'user1', username: 'test' },
+      // Minimal payload - only essential fields
+      const message: MinimalMessagePayload = {
+        messageId: 'msg1',
+        conversationId: 'conv1',
+        senderId: 'user1',
         content: 'Test',
-        type: 'text',
         createdAt: new Date().toISOString(),
+        type: 'text',
       };
 
       mockSocket._trigger('message:new', message);
@@ -396,11 +399,10 @@ describe('Socket Message Flow', () => {
   });
 
   it('should complete full message send/receive flow', async () => {
-    const sentMessages: MessagePayload[] = [];
-    const receivedMessages: MessagePayload[] = [];
+    const receivedMessages: MinimalMessagePayload[] = [];
 
-    // Setup receiver
-    mockSocket.on('message:new', (msg: MessagePayload) => {
+    // Setup receiver - receives minimal payload
+    mockSocket.on('message:new', (msg: MinimalMessagePayload) => {
       receivedMessages.push(msg);
     });
 
@@ -412,25 +414,26 @@ describe('Socket Message Flow', () => {
     };
 
     mockSocket.emit('message:send', payload, (response: any) => {
-      if (response.success && response.message) {
-        sentMessages.push(response.message);
-      }
+      // Sender receives full MessagePayload in callback
+      expect(response.success).toBe(true);
     });
 
-    // Simulate server response
-    const serverMessage: MessagePayload = {
-      _id: 'msg1',
-      conversation: 'conv1',
-      sender: { _id: 'user1', username: 'sender' },
+    // Simulate server broadcast - minimal payload for other clients
+    const serverMessage: MinimalMessagePayload = {
+      messageId: 'msg1',
+      conversationId: 'conv1',
+      senderId: 'user1',
       content: 'Hello!',
-      type: 'text',
       createdAt: new Date().toISOString(),
+      type: 'text',
     };
 
     mockSocket._trigger('message:new', serverMessage);
 
     expect(receivedMessages).toHaveLength(1);
     expect(receivedMessages[0].content).toBe('Hello!');
+    // Verify minimal payload doesn't include user profile data
+    expect((receivedMessages[0] as any).sender).toBeUndefined();
   });
 
   it('should handle message delivery confirmation flow', () => {

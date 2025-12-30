@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Next.js Web Application
+  # Next.js Web Application (Frontend)
   web:
     build:
       context: .
@@ -13,6 +13,7 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      - SERVICE_TYPE=frontend
       - MONGODB_URI=${MONGODB_URI}
       - AUTH_SECRET=${AUTH_SECRET}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
@@ -23,13 +24,21 @@ services:
       - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
       - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+      - REDIS_URL=${REDIS_URL:-}
     depends_on:
-      - socket
+      socket:
+        condition: service_healthy
     networks:
       - chatapp-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # Socket.IO Server
+  # Socket.IO Server (Real-time)
   socket:
     build:
       context: .
@@ -38,12 +47,22 @@ services:
       - "3001:3001"
     environment:
       - NODE_ENV=production
+      - SERVICE_TYPE=socket
       - PORT=3001
       - MONGODB_URI=${MONGODB_URI}
+      # CRITICAL: AUTH_SECRET must match frontend for shared authentication
+      - AUTH_SECRET=${AUTH_SECRET}
       - NEXT_PUBLIC_APP_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - REDIS_URL=${REDIS_URL:-}
     networks:
       - chatapp-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 networks:
   chatapp-network:

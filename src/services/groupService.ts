@@ -21,7 +21,7 @@ export class GroupService {
     const memberObjectIds = input.memberIds.map((id) => new mongoose.Types.ObjectId(id));
 
     // Verify all members exist
-    const existingUsers = await User.find({ _id: { $in: memberObjectIds } });
+    const existingUsers = await User.find({ _id: { $in: memberObjectIds } }).lean();
     if (existingUsers.length !== memberObjectIds.length) {
       throw new Error('One or more members do not exist');
     }
@@ -84,7 +84,8 @@ export class GroupService {
 
     const group = await Group.findById(groupId)
       .populate('members.user', 'name email image status')
-      .populate('owner', 'name email image');
+      .populate('owner', 'name email image')
+      .lean();
 
     if (!group) return null;
 
@@ -107,7 +108,8 @@ export class GroupService {
     return Group.find({ 'members.user': new mongoose.Types.ObjectId(userId) })
       .populate('members.user', 'name email image status')
       .populate('owner', 'name email image')
-      .sort({ updatedAt: -1 });
+      .sort({ updatedAt: -1 })
+      .lean() as Promise<IGroup[]>;
   }
 
   async updateGroup(
@@ -180,7 +182,7 @@ export class GroupService {
     }
 
     // Verify user exists
-    const user = await User.findById(newMemberObjectId);
+    const user = await User.findById(newMemberObjectId).lean();
     if (!user) throw new Error('User not found');
 
     // Add to group
@@ -381,7 +383,8 @@ export class GroupService {
       $text: { $search: query },
     })
       .limit(limit)
-      .populate('owner', 'name image');
+      .populate('owner', 'name image')
+      .lean() as Promise<IGroup[]>;
   }
 }
 

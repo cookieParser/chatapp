@@ -1,11 +1,51 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { Users, Plus, LogOut, Settings, Search, BellOff, MessageCircle, Code2 } from 'lucide-react';
 import { useNotificationStore } from '@/store/notificationStore';
 import { useChatStore } from '@/store/chatStore';
 import { UnreadBadge } from '@/components/notifications';
+
+// Cache duration in milliseconds (5 minutes)
+const CACHE_DURATION = 5 * 60 * 1000;
+
+// Simple client-side cache for conversations
+const conversationCache = {
+  data: null as any[] | null,
+  timestamp: 0,
+  isValid() {
+    return this.data !== null && Date.now() - this.timestamp < CACHE_DURATION;
+  },
+  set(data: any[]) {
+    this.data = data;
+    this.timestamp = Date.now();
+  },
+  get() {
+    return this.isValid() ? this.data : null;
+  },
+  invalidate() {
+    this.data = null;
+    this.timestamp = 0;
+  },
+  // Update a specific conversation's last message without full refetch
+  updateLastMessage(conversationId: string, content: string, createdAt: string) {
+    if (!this.data) return;
+    const index = this.data.findIndex((c: any) => c._id === conversationId);
+    if (index !== -1) {
+      const conv = { ...this.data[index] };
+      conv.lastMessage = { content, createdAt };
+      conv.lastMessageAt = createdAt;
+      // Move to top of list
+      this.data = [conv, ...this.data.filter((c: any) => c._id !== conversationId)];
+    }
+  }
+};
+
+// Export for other components to invalidate cache when needed
+export function invalidateConversationCache() {
+  conversationCache.invalidate();
+}
 
 interface GroupData {
   _id?: string;
@@ -91,12 +131,24 @@ export function ChatSidebar() {
     }
   }, [status]);
 
-  const fetchConversations = useCallback(async () => {
+  const fetchConversations = useCallback(async (forceRefresh = false) => {
     if (status !== 'authenticated') return;
+    
+    // Use cached data if available and not forcing refresh
+    if (!forceRefresh) {
+      const cached = conversationCache.get();
+      if (cached) {
+        setConversations(cached);
+        return;
+      }
+    }
+    
     try {
       const res = await fetch('/api/conversations');
       if (res.ok) {
-        setConversations(await res.json());
+        const data = await res.json();
+        setConversations(data);
+        conversationCache.set(data);
       }
     } catch (error) {
       console.error('Failed to fetch conversations:', error);
@@ -131,6 +183,23 @@ export function ChatSidebar() {
     }
   }, [status, fetchGroups, fetchUsers, fetchConversations]);
 
+  // Handle tab visibility changes - only refetch if cache is stale
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && status === 'authenticated') {
+        // Only fetch if cache is invalid (stale or empty)
+        if (!conversationCache.isValid()) {
+          fetchConversations(true);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [status, fetchConversations]);
+
   const handleChatWithDev = async () => {
     if (!devUser) {
       alert('Developer account not found. Please try again later.');
@@ -154,7 +223,7 @@ export function ChatSidebar() {
           image: devUser.image,
           participantId: devUser.id,
         });
-        fetchConversations();
+        fetchConversations(true); // Force refresh after creating new conversation
       }
     } catch (error) {
       console.error('Failed to start chat with dev:', error);
@@ -227,7 +296,7 @@ export function ChatSidebar() {
           participantId: user.id,
         });
         closeNewChatModal();
-        fetchConversations();
+        fetchConversations(true); // Force refresh after creating new conversation
       }
     } catch (error) {
       console.error('Failed to start chat:', error);
@@ -274,11 +343,21 @@ export function ChatSidebar() {
     // Mark as read when opening
     markConversationAsRead(conv._id);
     
+    // Get the other participant's ID for direct chats
+    let participantId: string | undefined;
+    if (conv.type === 'direct' && conv.participants) {
+      const otherParticipant = conv.participants.find(
+        p => p?.user?.email && p.user.email !== session?.user?.email
+      );
+      participantId = otherParticipant?.user?._id;
+    }
+    
     openChat({
       id: conv._id,
       type: conv.type === 'direct' ? 'direct' : 'group',
       name: getConversationName(conv),
       image: getConversationImage(conv),
+      participantId,
     });
   };
 
@@ -309,38 +388,33 @@ export function ChatSidebar() {
     .join('')
     .toUpperCase() || '?';
 
-  const filteredUsers = availableUsers.filter((u) =>
-    u.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredUsers = useMemo(() => 
+    availableUsers.filter((u) =>
+      u.name.toLowerCase().includes(searchQuery.toLowerCase())
+    ), [availableUsers, searchQuery]);
 
-  const newChatFilteredUsers = availableUsers.filter((u) =>
-    u.name.toLowerCase().includes(newChatSearchQuery.toLowerCase())
-  );
+  const newChatFilteredUsers = useMemo(() => 
+    availableUsers.filter((u) =>
+      u.name.toLowerCase().includes(newChatSearchQuery.toLowerCase())
+    ), [availableUsers, newChatSearchQuery]);
 
   return (
     <>
-      <aside className="flex h-full w-80 flex-col bg-gradient-to-b from-gray-900 to-gray-950 text-white">
-        {/* Header */}
-        <div className="p-4 border-b border-gray-800">
-          <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-            ChatApp
-          </h1>
-        </div>
-
+      <aside className="flex h-full w-full md:w-72 lg:w-80 flex-col bg-gradient-to-b from-gray-900 to-gray-950 text-white">
         {/* Chat with Dev Button - Shows for all users except the dev */}
         {status === 'authenticated' && !isDevUser && (
-          <div className="px-3 pt-3">
+          <div className="px-2 sm:px-3 pt-2 sm:pt-3">
             <button
               onClick={handleChatWithDev}
               disabled={startingDevChat || !devUser}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-600/20"
+              className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-600/20"
             >
-              <div className="p-2 rounded-lg bg-white/10">
-                <Code2 className="h-5 w-5" />
+              <div className="p-1.5 sm:p-2 rounded-lg bg-white/10 flex-shrink-0">
+                <Code2 className="h-4 w-4 sm:h-5 sm:w-5" />
               </div>
-              <div className="text-left">
-                <p className="font-semibold">{startingDevChat ? 'Starting...' : 'Chat with Dev'}</p>
-                <p className="text-xs text-blue-200">Get help or say hi!</p>
+              <div className="text-left min-w-0">
+                <p className="font-semibold text-sm sm:text-base truncate">{startingDevChat ? 'Starting...' : 'Chat with Dev'}</p>
+                <p className="text-xs text-blue-200 truncate">Get help or say hi!</p>
               </div>
             </button>
           </div>
@@ -348,41 +422,41 @@ export function ChatSidebar() {
 
         {/* Admin Dashboard - Shows only for dev */}
         {status === 'authenticated' && isDevUser && (
-          <div className="px-3 pt-3">
-            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border border-amber-500/30">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 shadow-lg shadow-amber-500/30">
-                <Code2 className="h-5 w-5 text-white" />
+          <div className="px-2 sm:px-3 pt-2 sm:pt-3">
+            <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border border-amber-500/30">
+              <div className="p-1.5 sm:p-2 rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 shadow-lg shadow-amber-500/30 flex-shrink-0">
+                <Code2 className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
               </div>
-              <div className="text-left">
-                <p className="font-semibold text-amber-400">Admin Dashboard</p>
-                <p className="text-xs text-amber-300/70">Manage user conversations</p>
+              <div className="text-left min-w-0">
+                <p className="font-semibold text-amber-400 text-sm sm:text-base truncate">Admin Dashboard</p>
+                <p className="text-xs text-amber-300/70 truncate">Manage user conversations</p>
               </div>
             </div>
           </div>
         )}
 
         {/* Tab Navigation */}
-        <div className="flex gap-1 p-2 mx-2 mt-3 bg-gray-800/50 rounded-lg">
+        <div className="flex gap-1 p-1.5 sm:p-2 mx-2 mt-2 sm:mt-3 bg-gray-800/50 rounded-lg">
           <button
             onClick={() => setActiveTab('chats')}
-            className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-all ${
               activeTab === 'chats'
                 ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25'
                 : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
             }`}
           >
-            <MessageCircle className="h-4 w-4" />
+            <MessageCircle className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             Chats
           </button>
           <button
             onClick={() => setActiveTab('groups')}
-            className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-all ${
               activeTab === 'groups'
                 ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25'
                 : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
             }`}
           >
-            <Users className="h-4 w-4" />
+            <Users className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             Groups
           </button>
         </div>
@@ -471,33 +545,33 @@ export function ChatSidebar() {
         </nav>
 
         {/* User Section */}
-        <div className="p-3 border-t border-gray-800 bg-gray-900/50">
-          <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-800 transition-colors">
-            <div className="relative">
+        <div className="p-2 sm:p-3 border-t border-gray-800 bg-gray-900/50">
+          <div className="flex items-center gap-2 sm:gap-3 p-1.5 sm:p-2 rounded-lg hover:bg-gray-800 transition-colors">
+            <div className="relative flex-shrink-0">
               {session?.user?.image ? (
                 <img
                   src={session.user.image}
                   alt={session.user.name || 'User'}
-                  className="h-10 w-10 rounded-full"
+                  className="h-9 w-9 sm:h-10 sm:w-10 rounded-full object-cover"
                 />
               ) : (
-                <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-semibold">
+                <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs sm:text-sm font-semibold">
                   {initials}
                 </div>
               )}
-              <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-gray-900" />
+              <span className="absolute bottom-0 right-0 h-2.5 w-2.5 sm:h-3 sm:w-3 rounded-full bg-green-500 border-2 border-gray-900" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{session?.user?.name || 'User'}</p>
+              <p className="text-xs sm:text-sm font-medium truncate">{session?.user?.name || 'User'}</p>
               <p className="text-xs text-gray-500 truncate">Online</p>
             </div>
-            <div className="flex gap-1">
-              <button className="p-2 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+            <div className="flex gap-0.5 sm:gap-1 flex-shrink-0">
+              <button className="p-1.5 sm:p-2 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
                 <Settings className="h-4 w-4" />
               </button>
               <button
                 onClick={() => signOut({ callbackUrl: '/login' })}
-                className="p-2 rounded-md text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-colors"
+                className="p-1.5 sm:p-2 rounded-md text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-colors"
                 title="Sign out"
               >
                 <LogOut className="h-4 w-4" />
@@ -697,7 +771,8 @@ export function ChatSidebar() {
   );
 }
 
-function GroupItem({
+// Memoized GroupItem to prevent re-renders when other groups update
+const GroupItem = memo(function GroupItem({
   id,
   name,
   memberCount,
@@ -746,9 +821,10 @@ function GroupItem({
       )}
     </button>
   );
-}
+});
 
-function ConversationItem({
+// Memoized ConversationItem to prevent re-renders when other conversations update
+const ConversationItem = memo(function ConversationItem({
   conversation,
   currentUserEmail,
   onClick,
@@ -850,4 +926,4 @@ function ConversationItem({
       )}
     </button>
   );
-}
+});

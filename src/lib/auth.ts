@@ -136,7 +136,7 @@ export async function registerUser(
 ) {
   await connectDB();
   
-  const existingUser = await User.findOne({ email });
+  const existingUser = await User.findOne({ email }).lean();
   if (existingUser) {
     throw new Error('User already exists');
   }

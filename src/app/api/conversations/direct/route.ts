@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify target user exists
-    const targetUser = await User.findById(targetUserId);
+    const targetUser = await User.findById(targetUserId).lean();
     if (!targetUser) {
       return NextResponse.json(
         { error: 'Target user not found' },
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     let conversation = await Conversation.findOne({
       type: 'direct',
       'participants.user': { $all: [currentUser._id, targetUser._id] },
-    });
+    }).lean();
 
     // Create new conversation if doesn't exist
     if (!conversation) {

@@ -25,7 +25,7 @@ export async function POST(
 
     await connectDB();
 
-    const dbUser = await User.findOne({ email: session.user.email });
+    const dbUser = await User.findOne({ email: session.user.email }).lean();
     if (!dbUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
@@ -35,7 +35,7 @@ export async function POST(
       _id: conversationId,
       'participants.user': dbUser._id,
       'participants.isActive': true,
-    });
+    }).select('_id').lean();
 
     if (!conversation) {
       return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
@@ -98,7 +98,7 @@ export async function DELETE(
 
     await connectDB();
 
-    const dbUser = await User.findOne({ email: session.user.email });
+    const dbUser = await User.findOne({ email: session.user.email }).lean();
     if (!dbUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }

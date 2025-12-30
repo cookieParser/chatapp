@@ -18,20 +18,29 @@ export function useTypingIndicator(options: UseTypingIndicatorOptions) {
   const { conversationId, startTyping, stopTyping } = options;
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const lastEmitRef = useRef<number>(0);
+  const isTypingRef = useRef<boolean>(false);
 
-  // Handle input change with debounced typing indicator
+  // Handle input change with throttled typing indicator (emit at most once every 500ms)
   const handleInputChange = useCallback(() => {
-    // Clear existing debounce
+    const now = Date.now();
+    
+    // Clear existing stop-typing debounce
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
 
-    // Emit typing start
-    startTyping(conversationId);
+    // Throttle: only emit typing:start if 500ms has passed since last emit
+    if (now - lastEmitRef.current >= SOCKET_THROTTLE.TYPING_THROTTLE_MS) {
+      startTyping(conversationId);
+      lastEmitRef.current = now;
+      isTypingRef.current = true;
+    }
 
     // Set debounce to stop typing after inactivity
     debounceRef.current = setTimeout(() => {
       stopTyping(conversationId);
+      isTypingRef.current = false;
     }, SOCKET_THROTTLE.TYPING_DEBOUNCE_MS);
   }, [conversationId, startTyping, stopTyping]);
 
@@ -41,7 +50,11 @@ export function useTypingIndicator(options: UseTypingIndicatorOptions) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-    stopTyping(conversationId);
+    if (isTypingRef.current) {
+      stopTyping(conversationId);
+      isTypingRef.current = false;
+    }
+    lastEmitRef.current = 0; // Reset throttle on explicit stop
   }, [conversationId, stopTyping]);
 
   // Add a typing user

@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
     await connectDB();
 
-    const dbUser = await User.findOne({ email: session.user.email });
+    const dbUser = await User.findOne({ email: session.user.email }).lean();
     if (!dbUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }

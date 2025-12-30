@@ -1,18 +1,47 @@
 # Production Deployment Guide
 
-This guide covers deploying the chat application with multiple options:
-- **Option 1**: Vercel + Railway/Render (Serverless)
-- **Option 2**: Docker + Jenkins CI/CD (Self-hosted)
+This guide covers deploying the chat application with service separation:
+- **Frontend**: Next.js app (Vercel, Docker, or any Node.js host)
+- **Socket Server**: Standalone Socket.IO server (Railway, Render, or Docker)
 
 ## Architecture Overview
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Web Server    │     │  Socket Server   │     │  MongoDB Atlas  │
-│   (Next.js)     │────▶│  (Socket.IO)     │────▶│   (Database)    │
-│   HTTP/SSR      │     │   WebSockets     │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        SHARED CONFIGURATION                         │
+│  • AUTH_SECRET (identical on both services)                         │
+│  • MONGODB_URI (same database)                                      │
+│  • REDIS_URL (optional, for distributed deployments)                │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+          ┌───────────────────┴───────────────────┐
+          ▼                                       ▼
+┌─────────────────────┐               ┌─────────────────────┐
+│   Frontend Service  │               │  Socket.IO Service  │
+│   (Next.js App)     │◄─────────────►│  (Real-time)        │
+│                     │   WebSocket   │                     │
+│  • Vercel           │               │  • Railway          │
+│  • Docker           │               │  • Render           │
+│  • Any Node host    │               │  • Docker           │
+└─────────────────────┘               └─────────────────────┘
+          │                                       │
+          └───────────────────┬───────────────────┘
+                              ▼
+                    ┌─────────────────┐
+                    │  MongoDB Atlas  │
+                    │   (Database)    │
+                    └─────────────────┘
 ```
+
+## Critical: Shared Authentication
+
+Both services MUST share these environment variables for authentication to work:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `AUTH_SECRET` | JWT signing secret (generate with `openssl rand -base64 32`) | ✅ Yes |
+| `MONGODB_URI` | MongoDB connection string | ✅ Yes |
+| `REDIS_URL` | Redis URL for distributed cache | Optional |
 
 ---
 

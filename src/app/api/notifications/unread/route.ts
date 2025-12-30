@@ -13,7 +13,7 @@ export async function GET() {
 
     await connectDB();
 
-    const dbUser = await User.findOne({ email: session.user.email });
+    const dbUser = await User.findOne({ email: session.user.email }).lean();
     if (!dbUser) {
       return NextResponse.json([]);
     }
@@ -22,7 +22,7 @@ export async function GET() {
     const conversations = await Conversation.find({
       'participants.user': dbUser._id,
       'participants.isActive': true,
-    }).select('_id');
+    }).select('_id').lean();
 
     const conversationIds = conversations.map((c) => c._id);
 

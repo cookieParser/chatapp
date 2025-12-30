@@ -161,7 +161,7 @@ export async function GET(request: NextRequest) {
 
     await connectDB();
 
-    let dbUser = await User.findOne({ email: session.user.email });
+    let dbUser = await User.findOne({ email: session.user.email }).lean();
     if (!dbUser) {
       return secureResponse([]);
     }
@@ -180,7 +180,8 @@ export async function GET(request: NextRequest) {
     })
       .populate('participants.user', 'name email image status')
       .populate('lastMessage')
-      .sort({ lastMessageAt: -1 });
+      .sort({ lastMessageAt: -1 })
+      .lean();
 
     return secureResponse(conversations);
   } catch (error) {

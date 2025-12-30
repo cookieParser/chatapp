@@ -10,10 +10,12 @@ import {
   SocketData,
   SendMessagePayload,
   MessagePayload,
+  MinimalMessagePayload,
   MessageStatusPayload,
   BatchMessageStatusPayload,
   PresencePayload,
   UserStatus,
+  DeleteMessagePayload,
 } from './types';
 import {
   checkRateLimit,
@@ -27,18 +29,36 @@ import {
   sanitizeMessage,
   sanitizeUsername,
 } from '@/lib/security';
+import { getPresenceManager, PresenceManager } from './presence';
+import {
+  invalidateChatListCacheForUsers,
+  updateCachedChatListWithMessage,
+  incrementUnreadCount,
+  resetUnreadCount,
+  CachedLastMessage,
+} from '@/lib/cache';
+
+/**
+ * Socket.IO Server for Real-time Messaging
+ * 
+ * ARCHITECTURE:
+ * - All message sending is handled via Socket.IO (no HTTP POST endpoints)
+ * - Messages are emitted to conversation-specific rooms only (not broadcast globally)
+ * - Room format: `conversation:${conversationId}`
+ * - Users auto-join their conversation rooms on connection
+ * 
+ * EVENTS:
+ * - message:send: Client sends a message (with callback for confirmation)
+ * - message:new: Server broadcasts new message to conversation room
+ * - message:delete: Client requests message deletion
+ * - message:deleted: Server broadcasts deletion to conversation room
+ */
 
 type SocketServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 type SocketClient = Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
-// Track online users: Map<userId, Set<socketId>>
-const onlineUsers = new Map<string, Set<string>>();
-
-// Track last seen timestamps: Map<userId, Date>
-const lastSeenMap = new Map<string, Date>();
-
-// Track presence subscriptions: Map<socketId, Set<userId>>
-const presenceSubscriptions = new Map<string, Set<string>>();
+// Initialize presence manager (uses in-memory storage by default)
+const presenceManager = getPresenceManager();
 
 // Track typing users per conversation: Map<conversationId, Map<userId, { username, timeout }>>
 const typingUsers = new Map<string, Map<string, { username: string; timeout: NodeJS.Timeout }>>();
@@ -49,6 +69,58 @@ const receiptQueues = new Map<string, {
   read: Map<string, Set<string>>;
   flushTimeout?: NodeJS.Timeout;
 }>();
+
+/**
+ * Invalidate chat list cache for all participants in a conversation
+ * Updates cache with new message info or invalidates if update fails
+ */
+async function invalidateChatListForConversation(
+  conversationId: string,
+  senderId: string,
+  lastMessage: CachedLastMessage
+): Promise<void> {
+  try {
+    // Get all participants in the conversation
+    const conversation = await Conversation.findById(conversationId)
+      .select('participants')
+      .lean();
+
+    if (!conversation) return;
+
+    const participantIds = conversation.participants
+      .filter((p: any) => p.isActive)
+      .map((p: any) => p.user.toString());
+
+    // Update cache for sender (they sent the message, so update their list)
+    await updateCachedChatListWithMessage(senderId, conversationId, lastMessage);
+
+    // For other participants, increment unread count and update last message
+    const otherParticipants = participantIds.filter((id: string) => id !== senderId);
+    
+    await Promise.all(
+      otherParticipants.map(async (participantId: string) => {
+        await updateCachedChatListWithMessage(participantId, conversationId, lastMessage);
+        await incrementUnreadCount(participantId, conversationId);
+      })
+    );
+  } catch (error) {
+    // If update fails, invalidate all participant caches to force refresh
+    console.error('Error updating cache, invalidating:', error);
+    try {
+      const conversation = await Conversation.findById(conversationId)
+        .select('participants')
+        .lean();
+      if (conversation) {
+        const participantIds = conversation.participants
+          .filter((p: any) => p.isActive)
+          .map((p: any) => p.user.toString());
+        await invalidateChatListCacheForUsers(participantIds);
+      }
+    } catch (e) {
+      console.error('Failed to invalidate cache:', e);
+    }
+  }
+}
 
 function getOrCreateReceiptQueue(socketId: string) {
   if (!receiptQueues.has(socketId)) {
@@ -82,34 +154,6 @@ function clearTypingUser(conversationId: string, userId: string, io: SocketServe
   }
 }
 
-// Helper to get user presence
-function getUserPresence(userId: string): PresencePayload {
-  const isOnline = onlineUsers.has(userId);
-  const lastSeen = lastSeenMap.get(userId) || new Date();
-  return {
-    userId,
-    status: isOnline ? 'online' : 'offline',
-    lastSeen: lastSeen.toISOString(),
-  };
-}
-
-// Helper to broadcast presence update to subscribers
-function broadcastPresenceUpdate(userId: string, io: SocketServer) {
-  const presence = getUserPresence(userId);
-  // Broadcast to all sockets subscribed to this user's presence
-  presenceSubscriptions.forEach((subscribedUsers, socketId) => {
-    if (subscribedUsers.has(userId)) {
-      io.to(socketId).emit('presence:update', presence);
-    }
-  });
-  // Also broadcast general online/offline events
-  if (presence.status === 'online') {
-    io.emit('user:online', userId);
-  } else {
-    io.emit('user:offline', userId);
-  }
-}
-
 // Helper to update last seen in database (debounced)
 const lastSeenUpdateQueue = new Map<string, NodeJS.Timeout>();
 async function updateLastSeenInDB(userId: string) {
@@ -120,9 +164,11 @@ async function updateLastSeenInDB(userId: string) {
   // Debounce DB updates to avoid too many writes
   const timeout = setTimeout(async () => {
     try {
+      const lastSeen = await presenceManager.getLastSeen(userId);
+      const isOnline = await presenceManager.isUserOnline(userId);
       await User.findByIdAndUpdate(userId, {
-        lastSeen: lastSeenMap.get(userId) || new Date(),
-        status: onlineUsers.has(userId) ? 'online' : 'offline',
+        lastSeen: lastSeen || new Date(),
+        status: isOnline ? 'online' : 'offline',
       });
       lastSeenUpdateQueue.delete(userId);
     } catch (error) {
@@ -157,6 +203,18 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
     pingTimeout: 60000,
     pingInterval: 25000,
     maxHttpBufferSize: 1e6,
+    // Enable per-message deflate compression for WebSocket
+    perMessageDeflate: {
+      threshold: 1024, // Only compress messages > 1KB
+      zlibDeflateOptions: {
+        level: 6, // Balanced compression (1-9)
+      },
+      zlibInflateOptions: {
+        chunkSize: 16 * 1024, // 16KB chunks for decompression
+      },
+      clientNoContextTakeover: true, // Reduce memory usage
+      serverNoContextTakeover: true,
+    },
   });
 
   // Connection rate limiting middleware
@@ -208,20 +266,14 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
 
     await connectDB();
 
-    // Track user online status and update last seen
-    const wasOffline = !onlineUsers.has(userId);
-    if (!onlineUsers.has(userId)) {
-      onlineUsers.set(userId, new Set());
-    }
-    onlineUsers.get(userId)!.add(socket.id);
-    lastSeenMap.set(userId, new Date());
+    // Set socket server reference for presence manager (only once)
+    presenceManager.setSocketServer(io);
 
-    // Initialize presence subscriptions for this socket
-    presenceSubscriptions.set(socket.id, new Set());
+    // Track user online status using presence manager
+    const wasOffline = await presenceManager.handleConnect(userId, socket.id);
 
-    // Broadcast presence update if user just came online
+    // Update DB if user just came online
     if (wasOffline) {
-      broadcastPresenceUpdate(userId, io);
       updateLastSeenInDB(userId);
     }
 
@@ -290,7 +342,7 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
           _id: conversationId,
           'participants.user': userObjectId,
           'participants.isActive': true,
-        });
+        }).select('_id').lean();
 
         if (!conversation) {
           return callback({ success: false, error: 'Conversation not found or access denied' });
@@ -308,6 +360,25 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
 
         // Populate sender info
         await message.populate('sender', '_id name image');
+
+        // Fetch reply message info if replying
+        let replyToMessage = undefined;
+        if (replyToId && isValidObjectId(replyToId)) {
+          const replyMsg = await Message.findById(replyToId)
+            .populate('sender', '_id name')
+            .lean();
+          if (replyMsg) {
+            replyToMessage = {
+              _id: (replyMsg as any)._id.toString(),
+              content: replyMsg.isDeleted ? 'This message was deleted' : replyMsg.content,
+              sender: {
+                _id: (replyMsg.sender as any)._id.toString(),
+                username: sanitizeUsername((replyMsg.sender as any).name),
+              },
+              isDeleted: replyMsg.isDeleted,
+            };
+          }
+        }
 
         // Update conversation's last message
         await Conversation.findByIdAndUpdate(conversationId, {
@@ -327,19 +398,97 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
           type: message.type,
           createdAt: message.createdAt.toISOString(),
           replyTo: message.replyTo?.toString(),
+          replyToMessage,
         };
 
-        // Broadcast to all users in the conversation (except sender)
-        socket.to(`conversation:${conversationId}`).emit('message:new', messagePayload);
+        // Minimal payload for broadcast - excludes user profile data
+        const minimalPayload: MinimalMessagePayload = {
+          messageId: message._id.toString(),
+          conversationId,
+          senderId: (message.sender as any)._id.toString(),
+          content: message.content,
+          createdAt: message.createdAt.toISOString(),
+          type: message.type,
+          replyToId: message.replyTo?.toString(),
+        };
+
+        // Broadcast minimal payload to all users in the conversation (except sender)
+        socket.to(`conversation:${conversationId}`).emit('message:new', minimalPayload);
 
         // Clear sender's typing indicator
         clearTypingUser(conversationId, userId, io);
+
+        // Invalidate chat list cache for all participants
+        // This ensures the chat list shows the latest message
+        invalidateChatListForConversation(conversationId, userId, {
+          content: message.content,
+          type: message.type,
+          senderName: (message.sender as any).name || username,
+          createdAt: message.createdAt.toISOString(),
+        }).catch((err) => console.error('Cache invalidation error:', err));
 
         // Send success response to sender with delivery confirmation
         callback({ success: true, message: messagePayload });
       } catch (error) {
         console.error('Error sending message:', error);
         callback({ success: false, error: 'Failed to send message' });
+      }
+    });
+
+    // Handle deleting messages
+    socket.on('message:delete', async (data: DeleteMessagePayload, callback) => {
+      try {
+        const { messageId, conversationId } = data;
+
+        // Validate IDs
+        if (!isValidObjectId(messageId) || !isValidObjectId(conversationId)) {
+          return callback({ success: false, error: 'Invalid ID format' });
+        }
+
+        let userObjectId: mongoose.Types.ObjectId;
+        try {
+          userObjectId = new mongoose.Types.ObjectId(userId);
+        } catch {
+          return callback({ success: false, error: 'Invalid user ID' });
+        }
+
+        // Find the message and verify ownership
+        const message = await Message.findOne({
+          _id: messageId,
+          conversation: conversationId,
+          isDeleted: false,
+        }).select('sender').lean();
+
+        if (!message) {
+          return callback({ success: false, error: 'Message not found' });
+        }
+
+        // Only the sender can delete their own message
+        if (message.sender.toString() !== userId) {
+          return callback({ success: false, error: 'You can only delete your own messages' });
+        }
+
+        // Soft delete using updateOne
+        await Message.updateOne(
+          { _id: messageId },
+          {
+            isDeleted: true,
+            deletedAt: new Date(),
+            deletedBy: userObjectId,
+          }
+        );
+
+        // Broadcast deletion to all users in the conversation
+        io.to(`conversation:${conversationId}`).emit('message:deleted', {
+          messageId,
+          conversationId,
+          deletedBy: userId,
+        });
+
+        callback({ success: true });
+      } catch (error) {
+        console.error('Error deleting message:', error);
+        callback({ success: false, error: 'Failed to delete message' });
       }
     });
 
@@ -395,6 +544,11 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
           conversationId,
           userId,
         });
+
+        // Reset unread count in cache (single read might clear unread)
+        resetUnreadCount(userId, conversationId).catch((err) =>
+          console.error('Error resetting unread count in cache:', err)
+        );
       } catch (error) {
         console.error('Error updating message read status:', error);
       }
@@ -511,6 +665,11 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
           userId,
           username,
         });
+
+        // Reset unread count in cache for this user
+        resetUnreadCount(userId, conversationId).catch((err) =>
+          console.error('Error resetting unread count in cache:', err)
+        );
       } catch (error) {
         console.error('Error batch updating read status:', error);
       }
@@ -586,7 +745,7 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
     });
 
     // Handle presence subscriptions
-    socket.on('presence:subscribe', (userIds: string[]) => {
+    socket.on('presence:subscribe', async (userIds: string[]) => {
       // Validate user IDs
       const validation = validateUserIds(userIds);
       if (!validation.valid) return;
@@ -598,28 +757,21 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
       );
       if (!rateLimitResult.success) return;
 
-      const subscriptions = presenceSubscriptions.get(socket.id);
-      if (subscriptions) {
-        userIds.forEach(id => subscriptions.add(id));
-        // Send current presence for all subscribed users
-        const presenceData = userIds.map(id => getUserPresence(id));
-        socket.emit('presence:bulk', presenceData);
-      }
+      // Subscribe and get current presence data
+      const presenceData = await presenceManager.subscribe(socket.id, userIds);
+      socket.emit('presence:bulk', presenceData);
     });
 
-    socket.on('presence:unsubscribe', (userIds: string[]) => {
+    socket.on('presence:unsubscribe', async (userIds: string[]) => {
       // Validate user IDs
       const validation = validateUserIds(userIds);
       if (!validation.valid) return;
 
-      const subscriptions = presenceSubscriptions.get(socket.id);
-      if (subscriptions) {
-        userIds.forEach(id => subscriptions.delete(id));
-      }
+      await presenceManager.unsubscribe(socket.id, userIds);
     });
 
     // Handle disconnection
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       console.log(`User disconnected: ${username} (${userId})`);
 
       // Clean up typing indicators for this user
@@ -645,20 +797,11 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
       }
       receiptQueues.delete(socket.id);
 
-      // Clean up presence subscriptions
-      presenceSubscriptions.delete(socket.id);
-
-      const userSockets = onlineUsers.get(userId);
-      if (userSockets) {
-        userSockets.delete(socket.id);
-        if (userSockets.size === 0) {
-          onlineUsers.delete(userId);
-          // Update last seen timestamp
-          lastSeenMap.set(userId, new Date());
-          // Broadcast presence update (user went offline)
-          broadcastPresenceUpdate(userId, io);
-          updateLastSeenInDB(userId);
-        }
+      // Handle presence disconnect (cleans up subscriptions and broadcasts if user went offline)
+      const wentOffline = await presenceManager.handleDisconnect(userId, socket.id);
+      
+      if (wentOffline) {
+        updateLastSeenInDB(userId);
       }
     });
   });
@@ -681,7 +824,7 @@ async function joinUserConversations(socket: SocketClient, userId: string) {
     const conversations = await Conversation.find({
       'participants.user': userObjectId,
       'participants.isActive': true,
-    }).select('_id');
+    }).select('_id').lean();
 
     conversations.forEach((conv) => {
       socket.join(`conversation:${conv._id.toString()}`);
@@ -694,21 +837,24 @@ async function joinUserConversations(socket: SocketClient, userId: string) {
 }
 
 // Export helper to check if user is online
-export function isUserOnline(userId: string): boolean {
-  return onlineUsers.has(userId);
+export async function isUserOnline(userId: string): Promise<boolean> {
+  return presenceManager.isUserOnline(userId);
 }
 
 // Export helper to get online users
-export function getOnlineUsers(): string[] {
-  return Array.from(onlineUsers.keys());
+export async function getOnlineUsers(): Promise<string[]> {
+  return presenceManager.getOnlineUsers();
 }
 
 // Export helper to get user's last seen timestamp
-export function getUserLastSeen(userId: string): Date | null {
-  return lastSeenMap.get(userId) || null;
+export async function getUserLastSeen(userId: string): Promise<Date | null> {
+  return presenceManager.getLastSeen(userId);
 }
 
 // Export helper to get presence for multiple users
-export function getPresenceForUsers(userIds: string[]): PresencePayload[] {
-  return userIds.map(userId => getUserPresence(userId));
+export async function getPresenceForUsers(userIds: string[]): Promise<PresencePayload[]> {
+  return presenceManager.getPresenceForUsers(userIds);
 }
+
+// Export the presence manager for advanced usage (e.g., switching to Redis)
+export { presenceManager };

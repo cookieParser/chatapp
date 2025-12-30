@@ -119,6 +119,9 @@ ConversationSchema.index({ createdBy: 1 });
 ConversationSchema.index({ isDeleted: 1 });
 ConversationSchema.index({ createdAt: -1 });
 
+// Index for channel name lookups
+ConversationSchema.index({ type: 1, name: 1 }, { name: 'channel_name_lookup' });
+
 // Compound index for finding direct conversations between two users
 ConversationSchema.index(
   { type: 1, 'participants.user': 1 },

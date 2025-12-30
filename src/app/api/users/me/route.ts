@@ -12,7 +12,7 @@ export async function GET() {
 
     await connectDB();
 
-    let dbUser = await User.findOne({ email: session.user.email });
+    let dbUser = await User.findOne({ email: session.user.email }).lean();
     
     if (!dbUser) {
       // Create user if doesn't exist

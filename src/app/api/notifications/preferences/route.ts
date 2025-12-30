@@ -12,12 +12,12 @@ export async function GET() {
 
     await connectDB();
 
-    const dbUser = await User.findOne({ email: session.user.email });
+    const dbUser = await User.findOne({ email: session.user.email }).lean();
     if (!dbUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    let preferences = await NotificationPreferences.findOne({ user: dbUser._id });
+    let preferences = await NotificationPreferences.findOne({ user: dbUser._id }).lean();
 
     // Create default preferences if none exist
     if (!preferences) {
@@ -62,7 +62,7 @@ export async function PATCH(request: NextRequest) {
 
     await connectDB();
 
-    const dbUser = await User.findOne({ email: session.user.email });
+    const dbUser = await User.findOne({ email: session.user.email }).lean();
     if (!dbUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }

@@ -24,19 +24,22 @@ export async function GET(request: NextRequest) {
     await connectDB();
 
     // Get users from database for lastSeen fallback
-    const users = await User.find({ _id: { $in: userIds } }).select('_id status lastSeen');
+    const users = await User.find({ _id: { $in: userIds } }).select('_id status lastSeen').lean();
 
-    const presenceData = userIds.map(userId => {
-      const isOnline = isUserOnline(userId);
-      const socketLastSeen = getUserLastSeen(userId);
-      const dbUser = users.find(u => u._id.toString() === userId);
+    // Build presence data with async calls
+    const presenceData = await Promise.all(
+      userIds.map(async (userId) => {
+        const isOnline = await isUserOnline(userId);
+        const socketLastSeen = await getUserLastSeen(userId);
+        const dbUser = users.find(u => u._id.toString() === userId);
 
-      return {
-        userId,
-        status: isOnline ? 'online' : 'offline',
-        lastSeen: socketLastSeen?.toISOString() || dbUser?.lastSeen?.toISOString() || null,
-      };
-    });
+        return {
+          userId,
+          status: isOnline ? 'online' : 'offline',
+          lastSeen: socketLastSeen?.toISOString() || dbUser?.lastSeen?.toISOString() || null,
+        };
+      })
+    );
 
     return NextResponse.json({ presence: presenceData });
   } catch (error) {
@@ -44,5 +47,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
-
-// Force rebuild

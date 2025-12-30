@@ -8,17 +8,18 @@ async function getDbUser(session: any) {
   if (!session?.user?.email) return null;
   
   await connectDB();
-  let dbUser = await User.findOne({ email: session.user.email });
+  let dbUser = await User.findOne({ email: session.user.email }).lean();
   
   if (!dbUser) {
     // Create user if doesn't exist
-    dbUser = await User.create({
+    const newUser = await User.create({
       email: session.user.email!,
       name: session.user.name || 'User',
       image: session.user.image || undefined,
       provider: 'credentials',
       status: 'online',
     });
+    return newUser;
   }
   
   return dbUser;
@@ -40,7 +41,8 @@ export async function GET() {
     const groups = await Group.find({ 'members.user': dbUser._id })
       .populate('members.user', 'name email image status')
       .populate('owner', 'name email image')
-      .sort({ updatedAt: -1 });
+      .sort({ updatedAt: -1 })
+      .lean();
 
     return NextResponse.json(groups);
   } catch (error) {

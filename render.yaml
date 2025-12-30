@@ -1,14 +1,31 @@
+# Render.yaml - Service Separation Configuration
+# 
+# This configures the Socket.IO server for Render deployment.
+# Deploy the frontend separately to Vercel or another Render service.
+#
+# IMPORTANT: AUTH_SECRET must match the frontend for authentication to work!
+
 services:
   - type: web
     name: chat-socket-server
     runtime: node
+    region: virginia
     buildCommand: npm install
     startCommand: npm run start:socket
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
+      - key: SERVICE_TYPE
+        value: socket
+      # CRITICAL: Must match frontend AUTH_SECRET
+      - key: AUTH_SECRET
+        sync: false
       - key: MONGODB_URI
         sync: false
+      # Frontend URL for CORS (comma-separated for multiple domains)
       - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      # Optional: Redis for distributed presence
+      - key: REDIS_URL
         sync: false

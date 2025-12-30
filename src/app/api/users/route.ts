@@ -13,7 +13,7 @@ export async function GET() {
     await connectDB();
 
     // Get current user from DB
-    let currentUser = await User.findOne({ email: session.user.email });
+    let currentUser = await User.findOne({ email: session.user.email }).lean();
     
     // Create current user if doesn't exist
     if (!currentUser) {

@@ -1,5 +1,6 @@
 'use client';
 
+import { memo, useCallback } from 'react';
 import { MediaAttachment } from '@/types';
 import { Download, File, X, Image as ImageIcon, Video, Music } from 'lucide-react';
 import { Button } from '@/components/ui';
@@ -11,7 +12,7 @@ interface MediaPreviewProps {
   compact?: boolean;
 }
 
-export function MediaPreview({ media, onRemove, showRemove = false, compact = false }: MediaPreviewProps) {
+export const MediaPreview = memo(function MediaPreview({ media, onRemove, showRemove = false, compact = false }: MediaPreviewProps) {
   const isImage = media.resourceType === 'image';
   const isVideo = media.resourceType === 'video';
   const isAudio = media.mimeType.startsWith('audio/');
@@ -125,4 +126,4 @@ export function MediaPreview({ media, onRemove, showRemove = false, compact = fa
       </div>
     </div>
   );
-}
+});

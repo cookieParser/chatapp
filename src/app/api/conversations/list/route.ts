@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { connectDB, Conversation, User } from '@/lib/db';
+import { connectDB, Conversation, User, Message } from '@/lib/db';
+import {
+  getCachedChatList,
+  setCachedChatList,
+  CachedChatItem,
+  CachedParticipant,
+} from '@/lib/cache';
 
 interface PopulatedUser {
   _id: { toString(): string };
@@ -49,7 +55,17 @@ export async function GET() {
       return NextResponse.json([]);
     }
 
-    // Find all conversations where current user is a participant
+    const userId = currentUser._id.toString();
+
+    // Try to get from cache first
+    const cachedList = await getCachedChatList(userId);
+    if (cachedList) {
+      return NextResponse.json(cachedList, {
+        headers: { 'X-Cache': 'HIT' },
+      });
+    }
+
+    // Cache miss - fetch from database
     const conversations = (await Conversation.find({
       'participants.user': currentUser._id,
       'participants.isActive': true,
@@ -66,9 +82,15 @@ export async function GET() {
       .sort({ lastMessageAt: -1, createdAt: -1 })
       .lean()) as unknown as PopulatedConversation[];
 
+    // Get unread counts for all conversations
+    const unreadCounts = await getUnreadCountsForUser(
+      userId,
+      conversations.map((c) => c._id.toString())
+    );
+
     // Format response with other user info for direct chats
-    const chatList = conversations.map((conv) => {
-      const otherParticipants = conv.participants
+    const chatList: CachedChatItem[] = conversations.map((conv) => {
+      const otherParticipants: CachedParticipant[] = conv.participants
         .filter(
           (p) =>
             p.user._id.toString() !== currentUser._id.toString() && p.isActive
@@ -81,8 +103,10 @@ export async function GET() {
           status: p.user.status,
         }));
 
+      const conversationId = conv._id.toString();
+
       return {
-        id: conv._id.toString(),
+        id: conversationId,
         type: conv.type,
         name: conv.type === 'group' ? conv.name : otherParticipants[0]?.name,
         image: conv.type === 'group' ? conv.image : otherParticipants[0]?.image,
@@ -92,15 +116,21 @@ export async function GET() {
               content: conv.lastMessage.content,
               type: conv.lastMessage.type,
               senderName: conv.lastMessage.sender?.name,
-              createdAt: conv.lastMessage.createdAt,
+              createdAt: conv.lastMessage.createdAt.toISOString(),
             }
           : null,
-        lastMessageAt: conv.lastMessageAt,
-        createdAt: conv.createdAt,
+        lastMessageAt: conv.lastMessageAt?.toISOString(),
+        createdAt: conv.createdAt.toISOString(),
+        unreadCount: unreadCounts.get(conversationId) || 0,
       };
     });
 
-    return NextResponse.json(chatList);
+    // Store in cache
+    await setCachedChatList(userId, chatList);
+
+    return NextResponse.json(chatList, {
+      headers: { 'X-Cache': 'MISS' },
+    });
   } catch (error) {
     console.error('Error fetching chat list:', error);
     return NextResponse.json(
@@ -108,4 +138,69 @@ export async function GET() {
       { status: 500 }
     );
   }
+}
+
+/**
+ * Get unread message counts for a user across multiple conversations
+ */
+async function getUnreadCountsForUser(
+  userId: string,
+  conversationIds: string[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+
+  if (conversationIds.length === 0) {
+    return counts;
+  }
+
+  try {
+    const { default: mongoose } = await import('mongoose');
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
+    // Aggregate unread counts per conversation
+    const results = await Message.aggregate([
+      {
+        $match: {
+          conversation: {
+            $in: conversationIds.map((id) => new mongoose.Types.ObjectId(id)),
+          },
+          sender: { $ne: userObjectId },
+          isDeleted: false,
+        },
+      },
+      {
+        $addFields: {
+          userStatus: {
+            $filter: {
+              input: '$statusPerUser',
+              as: 'status',
+              cond: { $eq: ['$$status.user', userObjectId] },
+            },
+          },
+        },
+      },
+      {
+        $match: {
+          $or: [
+            { userStatus: { $size: 0 } },
+            { 'userStatus.status': { $ne: 'read' } },
+          ],
+        },
+      },
+      {
+        $group: {
+          _id: '$conversation',
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    for (const result of results) {
+      counts.set(result._id.toString(), result.count);
+    }
+  } catch (error) {
+    console.error('Error getting unread counts:', error);
+  }
+
+  return counts;
 }

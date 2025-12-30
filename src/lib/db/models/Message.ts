@@ -149,6 +149,11 @@ MessageSchema.index(
   { conversation: 1, isDeleted: 1, createdAt: -1 },
   { name: 'conversation_messages_by_date' }
 );
+// Compound index for createdAt-based cursor pagination with _id tie-breaker
+MessageSchema.index(
+  { conversation: 1, isDeleted: 1, createdAt: -1, _id: -1 },
+  { name: 'conversation_messages_cursor_pagination' }
+);
 
 // Compound index for fetching unread messages
 MessageSchema.index(

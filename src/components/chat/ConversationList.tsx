@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useSession } from 'next-auth/react';
 import { Hash, Users, MessageCircle, Plus, Search, BellOff } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
@@ -61,7 +61,7 @@ export function ConversationList() {
     return () => clearInterval(interval);
   }, [fetchConversations]);
 
-  const getConversationName = (conv: Conversation): string => {
+  const getConversationName = useCallback((conv: Conversation): string => {
     if (conv.name) return conv.name;
     
     // For direct messages, show the other person's name
@@ -73,9 +73,9 @@ export function ConversationList() {
     }
     
     return 'Unnamed Conversation';
-  };
+  }, [session?.user?.email]);
 
-  const getConversationImage = (conv: Conversation): string | undefined => {
+  const getConversationImage = useCallback((conv: Conversation): string | undefined => {
     if (conv.image) return conv.image;
     
     if (conv.type === 'direct') {
@@ -86,21 +86,31 @@ export function ConversationList() {
     }
     
     return undefined;
-  };
+  }, [session?.user?.email]);
 
-  const handleOpenChat = (conv: Conversation) => {
+  const handleOpenChat = useCallback((conv: Conversation) => {
     const name = getConversationName(conv);
     const image = getConversationImage(conv);
+    
+    // Get the other participant's ID for direct chats
+    let participantId: string | undefined;
+    if (conv.type === 'direct' && conv.participants) {
+      const otherParticipant = conv.participants.find(
+        p => p.user.email !== session?.user?.email
+      );
+      participantId = otherParticipant?.user?._id;
+    }
     
     openChat({
       id: conv._id,
       type: conv.type === 'direct' ? 'direct' : 'group',
       name,
       image,
+      participantId,
     });
-  };
+  }, [getConversationName, getConversationImage, openChat, session?.user?.email]);
 
-  const formatTime = (dateString?: string) => {
+  const formatTime = useCallback((dateString?: string) => {
     if (!dateString) return '';
     const date = new Date(dateString);
     const now = new Date();
@@ -111,12 +121,13 @@ export function ConversationList() {
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
     if (diff < 604800000) return `${Math.floor(diff / 86400000)}d`;
     return date.toLocaleDateString();
-  };
+  }, []);
 
-  const filteredConversations = conversations.filter(conv => {
-    const name = getConversationName(conv).toLowerCase();
-    return name.includes(searchQuery.toLowerCase());
-  });
+  const filteredConversations = useMemo(() => 
+    conversations.filter(conv => {
+      const name = getConversationName(conv).toLowerCase();
+      return name.includes(searchQuery.toLowerCase());
+    }), [conversations, searchQuery, session?.user?.email]);
 
   if (loading) {
     return (
@@ -154,60 +165,94 @@ export function ConversationList() {
             </p>
           </div>
         ) : (
-          filteredConversations.map((conv) => {
-            const name = getConversationName(conv);
-            const image = getConversationImage(conv);
-            const unreadCount = unreadCounts.get(conv._id) || 0;
-            const isMuted = mutedConversations.has(conv._id);
-
-            return (
-              <button
-                key={conv._id}
-                onClick={() => handleOpenChat(conv)}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-left hover:bg-gray-800/50 transition-colors"
-              >
-                {/* Avatar */}
-                {image ? (
-                  <img
-                    src={image}
-                    alt={name}
-                    className="h-12 w-12 rounded-full object-cover flex-shrink-0"
-                  />
-                ) : (
-                  <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-semibold flex-shrink-0">
-                    {conv.type === 'direct' ? (
-                      name.charAt(0).toUpperCase()
-                    ) : (
-                      <Users className="h-5 w-5" />
-                    )}
-                  </div>
-                )}
-
-                {/* Content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-medium text-white truncate">{name}</span>
-                      {isMuted && <BellOff className="h-3 w-3 text-gray-500 flex-shrink-0" />}
-                    </div>
-                    <span className="text-xs text-gray-500 flex-shrink-0">
-                      {formatTime(conv.lastMessageAt)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 mt-0.5">
-                    <p className="text-sm text-gray-400 truncate">
-                      {conv.lastMessage?.content || 'No messages yet'}
-                    </p>
-                    {unreadCount > 0 && !isMuted && (
-                      <UnreadBadge count={unreadCount} size="sm" />
-                    )}
-                  </div>
-                </div>
-              </button>
-            );
-          })
+          filteredConversations.map((conv) => (
+            <ConversationItem
+              key={conv._id}
+              conversation={conv}
+              name={getConversationName(conv)}
+              image={getConversationImage(conv)}
+              unreadCount={unreadCounts.get(conv._id) || 0}
+              isMuted={mutedConversations.has(conv._id)}
+              lastMessageAt={conv.lastMessageAt}
+              lastMessageContent={conv.lastMessage?.content}
+              onOpenChat={handleOpenChat}
+              formatTime={formatTime}
+            />
+          ))
         )}
       </div>
     </div>
   );
 }
+
+// Memoized conversation item to prevent re-renders when other conversations update
+const ConversationItem = memo(function ConversationItem({
+  conversation,
+  name,
+  image,
+  unreadCount,
+  isMuted,
+  lastMessageAt,
+  lastMessageContent,
+  onOpenChat,
+  formatTime,
+}: {
+  conversation: Conversation;
+  name: string;
+  image?: string;
+  unreadCount: number;
+  isMuted: boolean;
+  lastMessageAt?: string;
+  lastMessageContent?: string;
+  onOpenChat: (conv: Conversation) => void;
+  formatTime: (dateString?: string) => string;
+}) {
+  const handleClick = useCallback(() => {
+    onOpenChat(conversation);
+  }, [onOpenChat, conversation]);
+
+  return (
+    <button
+      onClick={handleClick}
+      className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-left hover:bg-gray-800/50 transition-colors"
+    >
+      {/* Avatar */}
+      {image ? (
+        <img
+          src={image}
+          alt={name}
+          className="h-12 w-12 rounded-full object-cover flex-shrink-0"
+        />
+      ) : (
+        <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-semibold flex-shrink-0">
+          {conversation.type === 'direct' ? (
+            name.charAt(0).toUpperCase()
+          ) : (
+            <Users className="h-5 w-5" />
+          )}
+        </div>
+      )}
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-medium text-white truncate">{name}</span>
+            {isMuted && <BellOff className="h-3 w-3 text-gray-500 flex-shrink-0" />}
+          </div>
+          <span className="text-xs text-gray-500 flex-shrink-0">
+            {formatTime(lastMessageAt)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-0.5">
+          <p className="text-sm text-gray-400 truncate">
+            {lastMessageContent || 'No messages yet'}
+          </p>
+          {unreadCount > 0 && !isMuted && (
+            <UnreadBadge count={unreadCount} size="sm" />
+          )}
+        </div>
+      </div>
+    </button>
+  );
+});

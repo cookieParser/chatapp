@@ -9,7 +9,8 @@ export const WEBSOCKET_CONFIG = {
 
 export const SOCKET_THROTTLE = {
   TYPING_DEBOUNCE_MS: 300,
-  TYPING_TIMEOUT_MS: 3000,
+  TYPING_THROTTLE_MS: 500, // Emit typing events at most once every 500ms
+  TYPING_TIMEOUT_MS: 3000, // Remove typing indicator after 3s of inactivity
   BATCH_RECEIPTS_MS: 500,
   MAX_BATCH_SIZE: 50,
   // Additional throttle settings
@@ -25,7 +26,7 @@ export const MESSAGE_CONFIG = {
 } as const;
 
 export const PAGINATION = {
-  DEFAULT_PAGE_SIZE: 50,
-  MAX_PAGE_SIZE: 100,
+  DEFAULT_PAGE_SIZE: 25, // Fetch 20-30 messages per page for optimal UX
+  MAX_PAGE_SIZE: 50,
   INFINITE_SCROLL_THRESHOLD: 100, // px from top to trigger load
 } as const;

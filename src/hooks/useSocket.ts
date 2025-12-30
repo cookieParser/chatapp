@@ -1,5 +1,17 @@
 'use client';
 
+/**
+ * Socket.IO Hook for Real-time Messaging
+ * 
+ * This hook provides the primary interface for sending and receiving messages.
+ * All message operations are handled via Socket.IO - there are no HTTP fallbacks.
+ * 
+ * Messages are scoped to conversation-specific rooms:
+ * - Users auto-join their conversation rooms on connection
+ * - Messages are only broadcast to participants in the same conversation
+ * - No global message broadcasting occurs
+ */
+
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_THROTTLE } from '@/lib/constants';
@@ -8,6 +20,7 @@ import {
   ServerToClientEvents,
   SendMessagePayload,
   MessagePayload,
+  MinimalMessagePayload,
   MessageResponse,
   TypingPayload,
   TypingUpdatePayload,
@@ -22,7 +35,7 @@ type SocketClient = Socket<ServerToClientEvents, ClientToServerEvents>;
 interface UseSocketOptions {
   userId: string;
   username: string;
-  onMessage?: (message: MessagePayload) => void;
+  onMessage?: (message: MinimalMessagePayload) => void;
   onTypingStart?: (data: TypingPayload) => void;
   onTypingStop?: (data: TypingPayload) => void;
   onTypingUpdate?: (data: TypingUpdatePayload) => void;
@@ -109,6 +122,10 @@ export function useSocket(options: UseSocketOptions) {
     const socket: SocketClient = io(socketUrl, {
       auth: { userId, username },
       transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
 
     socketRef.current = socket;
@@ -117,6 +134,16 @@ export function useSocket(options: UseSocketOptions) {
 
     // Get presence store methods
     const { setPresence, setPresenceBulk } = usePresenceStore.getState();
+
+    // Handle tab visibility changes - reconnect when tab becomes visible
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && socket && !socket.connected) {
+        console.log('Tab visible, reconnecting socket...');
+        socket.connect();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     socket.on('connect', () => {
       console.log('Socket connected');
@@ -188,6 +215,9 @@ export function useSocket(options: UseSocketOptions) {
     });
 
     return () => {
+      // Remove visibility change listener
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      
       // Clear all typing timeouts
       typingTimeoutRef.current.forEach((timeout) => clearTimeout(timeout));
       typingTimeoutRef.current.clear();
