@@ -143,9 +143,10 @@ export function VirtualizedMessageList({
   // Auto-scroll on new messages if at bottom
   useEffect(() => {
     if (messages.length > prevMessageCountRef.current && isAtBottomRef.current) {
-      requestAnimationFrame(() => {
+      // Use setTimeout instead of requestAnimationFrame to avoid flushSync issues
+      setTimeout(() => {
         scrollToBottom('smooth');
-      });
+      }, 0);
     }
     prevMessageCountRef.current = messages.length;
   }, [messages.length, scrollToBottom]);
@@ -153,11 +154,16 @@ export function VirtualizedMessageList({
   // Initial scroll to bottom
   useEffect(() => {
     if (!isLoading && messages.length > 0) {
-      scrollToBottom();
+      // Delay initial scroll to avoid flushSync during render
+      setTimeout(() => {
+        scrollToBottom();
+      }, 0);
     }
   }, [isLoading, scrollToBottom, messages.length]);
 
+  // Get virtual items outside of render to avoid flushSync issues
   const items = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
 
   // Loading state
   if (isLoading) {
@@ -192,7 +198,7 @@ export function VirtualizedMessageList({
 
       <div
         style={{
-          height: virtualizer.getTotalSize(),
+          height: totalSize,
           width: '100%',
           position: 'relative',
         }}
