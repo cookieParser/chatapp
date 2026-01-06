@@ -6,6 +6,7 @@ import { io, Socket } from 'socket.io-client';
 import { Send, MoreVertical, X, ArrowLeft } from 'lucide-react';
 import { MuteButton } from '@/components/notifications';
 import { useNotificationStore } from '@/store/notificationStore';
+import { useNotificationContext } from '@/components/notifications/NotificationProvider';
 import { useMessageStore, generateTempId, OptimisticMessage, useUserCacheStore } from '@/store';
 import { useChatStore } from '@/store/chatStore';
 import { MessageStatus } from '@/types';
@@ -39,7 +40,8 @@ export function ChatRoom({ conversationId, conversationName, conversationType, o
   const [mongoUserId, setMongoUserId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const { clearUnread, incrementUnread } = useNotificationStore();
+  const { clearUnread } = useNotificationStore();
+  const { handleNewMessage } = useNotificationContext();
   
   // Use message store for optimistic updates
   const {
@@ -160,9 +162,10 @@ export function ChatRoom({ conversationId, conversationName, conversationType, o
         replyTo: message.replyToId,
       });
       
-      // Increment unread if message is from someone else
+      // Trigger notification (sound + browser notification) if message is from someone else
       if (message.senderId !== mongoUserId) {
-        incrementUnread(conversationId);
+        const senderName = sender?.name || sender?.username || 'Someone';
+        handleNewMessage(conversationId, senderName, message.content);
       }
       
       // Invalidate conversation cache so sidebar updates on next view
@@ -204,7 +207,7 @@ export function ChatRoom({ conversationId, conversationName, conversationType, o
     return () => {
       newSocket.disconnect();
     };
-  }, [session?.user, mongoUserId, conversationId, incrementUnread, getUser, fetchUser, addIncomingMessage]);
+  }, [session?.user, mongoUserId, conversationId, handleNewMessage, getUser, fetchUser, addIncomingMessage]);
 
   // Fetch initial presence status from API
   useEffect(() => {
