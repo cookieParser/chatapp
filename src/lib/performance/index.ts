@@ -134,13 +134,17 @@ export function requestIdleCallbackPolyfill(
   callback: IdleRequestCallback,
   options?: IdleRequestOptions
 ): number {
+  if (typeof window === 'undefined') {
+    return 0;
+  }
+  
   if ('requestIdleCallback' in window) {
-    return window.requestIdleCallback(callback, options);
+    return (window as Window).requestIdleCallback(callback, options);
   }
   
   // Fallback for Safari
   const start = Date.now();
-  return window.setTimeout(() => {
+  return setTimeout(() => {
     callback({
       didTimeout: false,
       timeRemaining: () => Math.max(0, 50 - (Date.now() - start)),
@@ -152,10 +156,14 @@ export function requestIdleCallbackPolyfill(
  * Cancel idle callback polyfill
  */
 export function cancelIdleCallbackPolyfill(id: number): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  
   if ('cancelIdleCallback' in window) {
-    window.cancelIdleCallback(id);
+    (window as Window).cancelIdleCallback(id);
   } else {
-    window.clearTimeout(id);
+    clearTimeout(id);
   }
 }
 
