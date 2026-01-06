@@ -37,6 +37,7 @@ import {
   resetUnreadCount,
   CachedLastMessage,
 } from '@/lib/cache';
+import { configureRedisAdapter } from '@/lib/redis/socketAdapter';
 
 /**
  * Socket.IO Server for Real-time Messaging
@@ -46,6 +47,7 @@ import {
  * - Messages are emitted to conversation-specific rooms only (not broadcast globally)
  * - Room format: `conversation:${conversationId}`
  * - Users auto-join their conversation rooms on connection
+ * - Redis adapter enables horizontal scaling across multiple server instances
  * 
  * EVENTS:
  * - message:send: Client sends a message (with callback for confirmation)
@@ -205,9 +207,10 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
     maxHttpBufferSize: 1e6,
     // Enable per-message deflate compression for WebSocket
     perMessageDeflate: {
-      threshold: 1024, // Only compress messages > 1KB
+      threshold: 512, // Compress messages > 512 bytes (lowered for chat messages)
       zlibDeflateOptions: {
         level: 6, // Balanced compression (1-9)
+        memLevel: 8, // Memory usage for compression
       },
       zlibInflateOptions: {
         chunkSize: 16 * 1024, // 16KB chunks for decompression
@@ -215,6 +218,16 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
       clientNoContextTakeover: true, // Reduce memory usage
       serverNoContextTakeover: true,
     },
+    // Connection state recovery for reconnection
+    connectionStateRecovery: {
+      maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
+      skipMiddlewares: false,
+    },
+  });
+
+  // Configure Redis adapter for horizontal scaling (async, non-blocking)
+  configureRedisAdapter(io).catch(err => {
+    console.warn('Redis adapter not configured:', err.message);
   });
 
   // Connection rate limiting middleware

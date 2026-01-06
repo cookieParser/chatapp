@@ -1,2 +1,2 @@
-export { default as connectDB } from './mongoose';
+export { default as connectDB, getPoolStats, disconnectDB } from './mongoose';
 export * from './models';

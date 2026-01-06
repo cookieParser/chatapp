@@ -602,14 +602,10 @@ export function ChatRoom({ conversationId, conversationName, conversationType, o
 
   // Determine what status to show
   const renderStatus = () => {
-    if (!isConnected) {
-      return <span className="text-yellow-400">● Connecting...</span>;
-    }
-    
     // For direct chats, show the other user's online status
     if (conversationType === 'direct') {
-      // Show offline as default while loading - more user-friendly than "Loading..."
-      if (!resolvedOtherUserId || otherUserOnline === null) {
+      // Show offline as default while loading or connecting
+      if (!isConnected || !resolvedOtherUserId || otherUserOnline === null) {
         return <span className="text-gray-400">● Offline</span>;
       }
       if (otherUserOnline) {
@@ -618,8 +614,8 @@ export function ChatRoom({ conversationId, conversationName, conversationType, o
       return <span className="text-gray-400">● {formatLastSeen(otherUserLastSeen)}</span>;
     }
     
-    // For groups/channels, just show connected status
-    return <span className="text-green-400">● Connected</span>;
+    // For groups/channels, don't show connection status
+    return null;
   };
 
   const { closeChat } = useChatStore();

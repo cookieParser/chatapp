@@ -1,6 +1,23 @@
 version: '3.8'
 
 services:
+  # Redis (Caching + Pub/Sub)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - chatapp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # Next.js Web Application (Frontend)
   web:
     build:
@@ -24,8 +41,12 @@ services:
       - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
       - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
-      - REDIS_URL=${REDIS_URL:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - MONGODB_POOL_SIZE=${MONGODB_POOL_SIZE:-50}
+      - MONGODB_MIN_POOL_SIZE=${MONGODB_MIN_POOL_SIZE:-10}
     depends_on:
+      redis:
+        condition: service_healthy
       socket:
         condition: service_healthy
     networks:
@@ -53,7 +74,12 @@ services:
       # CRITICAL: AUTH_SECRET must match frontend for shared authentication
       - AUTH_SECRET=${AUTH_SECRET}
       - NEXT_PUBLIC_APP_URL=${NEXTAUTH_URL:-http://localhost:3000}
-      - REDIS_URL=${REDIS_URL:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - MONGODB_POOL_SIZE=${MONGODB_POOL_SIZE:-50}
+      - MONGODB_MIN_POOL_SIZE=${MONGODB_MIN_POOL_SIZE:-10}
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - chatapp-network
     restart: unless-stopped
@@ -67,3 +93,6 @@ services:
 networks:
   chatapp-network:
     driver: bridge
+
+volumes:
+  redis-data:

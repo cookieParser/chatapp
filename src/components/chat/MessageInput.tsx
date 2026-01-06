@@ -172,7 +172,7 @@ export const MessageInput = memo(function MessageInput({
         <Input
           value={message}
           onChange={handleInputChange}
-          placeholder={isConnected ? "Type a message..." : "Connecting..."}
+          placeholder="Type a message..."
           className="flex-1 text-sm sm:text-base"
           disabled={isDisabled}
         />

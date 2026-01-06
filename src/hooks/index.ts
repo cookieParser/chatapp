@@ -1,4 +1,5 @@
 export { useWebSocket } from './useWebSocket';
+export { useOptimisticMessages } from './useOptimisticMessages';
 export { useSocket } from './useSocket';
 export { useTypingIndicator } from './useTypingIndicator';
 export { useMessageStatus } from './useMessageStatus';
