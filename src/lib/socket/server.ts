@@ -38,6 +38,7 @@ import {
   CachedLastMessage,
 } from '@/lib/cache';
 import { configureRedisAdapter } from '@/lib/redis/socketAdapter';
+import { sendMessageNotification } from '@/lib/push';
 
 /**
  * Socket.IO Server for Real-time Messaging
@@ -439,6 +440,52 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
           senderName: (message.sender as any).name || username,
           createdAt: message.createdAt.toISOString(),
         }).catch((err) => console.error('Cache invalidation error:', err));
+
+        // Send push notifications to offline participants
+        // This runs in background and doesn't block the response
+        (async () => {
+          try {
+            const conv = await Conversation.findById(conversationId)
+              .select('participants name type')
+              .lean();
+            
+            if (conv) {
+              const recipientIds = conv.participants
+                .filter((p: any) => p.isActive && p.user.toString() !== userId)
+                .map((p: any) => p.user.toString());
+              
+              // Only send push to users who are offline (not connected via socket)
+              const offlineRecipients: string[] = [];
+              for (const recipientId of recipientIds) {
+                const isOnline = await presenceManager.isUserOnline(recipientId);
+                if (!isOnline) {
+                  offlineRecipients.push(recipientId);
+                }
+              }
+              
+              if (offlineRecipients.length > 0) {
+                await sendMessageNotification(
+                  offlineRecipients,
+                  {
+                    _id: message._id.toString(),
+                    conversation: conversationId,
+                    sender: {
+                      _id: (message.sender as any)._id.toString(),
+                      name: (message.sender as any).name,
+                      image: (message.sender as any).image,
+                    },
+                    content: message.content,
+                    type: message.type,
+                    createdAt: message.createdAt,
+                  },
+                  conv.type === 'group' ? conv.name : undefined
+                );
+              }
+            }
+          } catch (pushErr) {
+            console.error('Push notification error:', pushErr);
+          }
+        })();
 
         // Send success response to sender with delivery confirmation
         callback({ success: true, message: messagePayload });

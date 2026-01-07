@@ -138,7 +138,7 @@ export class InMemoryPresenceStorage implements PresenceStorage {
     return userIds.map(userId => ({
       userId,
       status: this.userConnections.has(userId) ? 'online' : 'offline' as UserStatus,
-      lastSeen: (this.lastSeenMap.get(userId) || new Date()).toISOString(),
+      lastSeen: this.lastSeenMap.get(userId)?.toISOString() || null,
     }));
   }
 
@@ -256,7 +256,7 @@ export class RedisPresenceStorage implements PresenceStorage {
       results.push({
         userId,
         status: isOnline ? 'online' : 'offline',
-        lastSeen: (lastSeen || new Date()).toISOString(),
+        lastSeen: lastSeen?.toISOString() || null,
       });
     }
     return results;

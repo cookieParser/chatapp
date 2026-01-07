@@ -1,8 +1,11 @@
+/**
+ * Push Unsubscription API Endpoint
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { connectDB, User, NotificationPreferences } from '@/lib/db';
+import { removePushSubscription } from '@/lib/push';
 
-// POST /api/notifications/push/unsubscribe - Remove push subscription
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
@@ -13,26 +16,17 @@ export async function POST(request: NextRequest) {
     const { endpoint } = await request.json();
 
     if (!endpoint) {
-      return NextResponse.json({ error: 'Endpoint required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Endpoint required' },
+        { status: 400 }
+      );
     }
 
-    await connectDB();
-
-    const dbUser = await User.findOne({ email: session.user.email }).lean();
-    if (!dbUser) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    await NotificationPreferences.findOneAndUpdate(
-      { user: dbUser._id },
-      {
-        $pull: { pushSubscriptions: { endpoint } },
-      }
-    );
+    await removePushSubscription(endpoint);
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error removing push subscription:', error);
+    console.error('Push unsubscription error:', error);
     return NextResponse.json(
       { error: 'Failed to remove subscription' },
       { status: 500 }

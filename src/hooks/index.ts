@@ -9,3 +9,8 @@ export { usePresence, setPresenceSocket } from './usePresence';
 export { useNotifications } from './useNotifications';
 export { usePushNotifications } from './usePushNotifications';
 export { useInfiniteMessages } from './useInfiniteMessages';
+
+// WhatsApp-like optimizations
+export { useOptimizedSocket } from './useOptimizedSocket';
+export { useOfflineConversations, useOfflineMessages, usePushMessageHandler } from './useOfflineFirst';
+export { useAppStartup, useInstantLoad } from './useAppStartup';

@@ -1,10 +1,10 @@
 'use client';
 
-import { useRef, useEffect, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui';
-import { Check, CheckCheck, Clock, AlertCircle, RotateCcw, Reply, Trash2, Loader2 } from 'lucide-react';
+import { Check, CheckCheck, Clock, AlertCircle, RotateCcw, Reply, Trash2, Loader2, X, Copy } from 'lucide-react';
 import { MessageStatus } from '@/types';
 import { OptimisticMessage } from '@/store';
 
@@ -276,6 +276,13 @@ const MessageBubble = ({
   onCancel 
 }: MessageBubbleProps) => {
   const { isOwn, status, isDeleted } = message;
+  const [showActions, setShowActions] = useState(false);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const swipeThreshold = 80; // pixels to trigger reply
+  const maxSwipe = 100;
 
   const handleRetry = useCallback(() => {
     onRetry?.(message.tempId);
@@ -286,23 +293,165 @@ const MessageBubble = ({
   }, [onCancel, message.tempId]);
 
   const handleReply = useCallback(() => {
+    setShowActions(false);
     onReply?.(message);
   }, [onReply, message]);
 
   const handleDelete = useCallback(() => {
+    setShowActions(false);
     onDelete?.(message._id);
   }, [onDelete, message._id]);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(message.content);
+    setShowActions(false);
+  }, [message.content]);
+
+  // Touch handlers for swipe and long press
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (isDeleted || status === 'sending' || status === 'failed') return;
+    
+    touchStartRef.current = {
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+      time: Date.now(),
+    };
+    
+    // Long press timer
+    longPressTimerRef.current = setTimeout(() => {
+      if (!isSwiping) {
+        setShowActions(true);
+        if (navigator.vibrate) {
+          navigator.vibrate(50);
+        }
+      }
+    }, 500);
+  }, [isDeleted, status, isSwiping]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!touchStartRef.current || isDeleted || !onReply) return;
+    
+    const deltaX = e.touches[0].clientX - touchStartRef.current.x;
+    const deltaY = Math.abs(e.touches[0].clientY - touchStartRef.current.y);
+    
+    // Cancel long press if moving
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    
+    // Only allow horizontal swipe if not scrolling vertically
+    if (deltaY > 30) {
+      setSwipeOffset(0);
+      setIsSwiping(false);
+      return;
+    }
+    
+    // Determine swipe direction based on message ownership
+    // Own messages: swipe left (negative) to reply
+    // Others' messages: swipe right (positive) to reply
+    const swipeDirection = isOwn ? -1 : 1;
+    const adjustedDelta = deltaX * swipeDirection;
+    
+    if (adjustedDelta > 10) {
+      setIsSwiping(true);
+      // Apply resistance after threshold
+      const resistance = adjustedDelta > swipeThreshold ? 0.3 : 1;
+      const offset = Math.min(adjustedDelta * resistance, maxSwipe);
+      setSwipeOffset(offset * swipeDirection);
+    } else {
+      setSwipeOffset(0);
+    }
+  }, [isDeleted, isOwn, onReply]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    
+    // Check if swipe threshold reached
+    if (Math.abs(swipeOffset) >= swipeThreshold && onReply) {
+      // Vibrate feedback
+      if (navigator.vibrate) {
+        navigator.vibrate(30);
+      }
+      onReply(message);
+    }
+    
+    // Animate back
+    setSwipeOffset(0);
+    setIsSwiping(false);
+    touchStartRef.current = null;
+  }, [swipeOffset, onReply, message]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Close actions when clicking outside
+  useEffect(() => {
+    if (!showActions) return;
+    
+    const handleClickOutside = () => {
+      setShowActions(false);
+    };
+    
+    const timer = setTimeout(() => {
+      document.addEventListener('click', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+    }, 100);
+    
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('click', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [showActions]);
+
+  // Calculate reply icon opacity based on swipe progress
+  const replyIconOpacity = Math.min(Math.abs(swipeOffset) / swipeThreshold, 1);
+  const showReplyIndicator = Math.abs(swipeOffset) > 20;
 
   return (
     <div
       className={cn(
-        'group flex gap-2 px-4',
+        'group flex gap-2 px-4 relative overflow-hidden',
         isOwn ? 'flex-row-reverse' : 'flex-row',
         showAvatar ? 'pt-3' : 'pt-0.5'
       )}
     >
+      {/* Swipe reply indicator */}
+      {showReplyIndicator && (
+        <div 
+          className={cn(
+            'absolute top-1/2 -translate-y-1/2 flex items-center justify-center transition-opacity',
+            isOwn ? 'right-2' : 'left-2'
+          )}
+          style={{ opacity: replyIconOpacity }}
+        >
+          <div className={cn(
+            'p-2 rounded-full',
+            Math.abs(swipeOffset) >= swipeThreshold ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+          )}>
+            <Reply className="h-4 w-4" />
+          </div>
+        </div>
+      )}
+
       {/* Avatar */}
-      <div className="w-8 shrink-0">
+      <div 
+        className="w-8 shrink-0"
+        style={{
+          transform: `translateX(${swipeOffset}px)`,
+          transition: isSwiping ? 'none' : 'transform 0.2s ease-out',
+        }}
+      >
         {showAvatar && !isOwn && (
           <Avatar className="h-8 w-8">
             <AvatarImage src={message.sender.image} alt={message.sender.name || message.sender.username} />
@@ -324,6 +473,10 @@ const MessageBubble = ({
           'flex max-w-[70%] flex-col gap-1',
           isOwn && 'items-end'
         )}
+        style={{
+          transform: `translateX(${swipeOffset}px)`,
+          transition: isSwiping ? 'none' : 'transform 0.2s ease-out',
+        }}
       >
         {/* Sender name (for groups) */}
         {showAvatar && !isOwn && conversationType !== 'direct' && (
@@ -353,9 +506,9 @@ const MessageBubble = ({
 
         {/* Bubble with actions */}
         <div className="relative flex items-center gap-1">
-          {/* Action buttons (left side for own messages) */}
+          {/* Desktop action buttons (left side for own messages) */}
           {isOwn && status !== 'sending' && status !== 'failed' && !isDeleted && (
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="hidden sm:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {onReply && (
                 <button
                   onClick={handleReply}
@@ -379,22 +532,26 @@ const MessageBubble = ({
 
           <div
             className={cn(
-              'relative rounded-2xl px-4 py-2',
+              'relative rounded-2xl px-4 py-2 select-none touch-pan-y',
               isOwn
                 ? 'bg-primary text-primary-foreground'
                 : 'bg-muted text-foreground',
               isDeleted && 'italic opacity-60',
               status === 'failed' && 'bg-destructive/20 text-destructive'
             )}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onTouchCancel={handleTouchEnd}
           >
             <p className="text-sm whitespace-pre-wrap break-words">
               {isDeleted ? 'This message was deleted' : message.content}
             </p>
           </div>
 
-          {/* Action buttons (right side for other's messages) */}
+          {/* Desktop action buttons (right side for other's messages) */}
           {!isOwn && !isDeleted && (
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="hidden sm:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {onReply && (
                 <button
                   onClick={handleReply}
@@ -404,6 +561,47 @@ const MessageBubble = ({
                   <Reply className="h-3.5 w-3.5" />
                 </button>
               )}
+            </div>
+          )}
+
+          {/* Mobile action menu (shows on long press) */}
+          {showActions && (
+            <div 
+              className={cn(
+                'absolute z-50 flex items-center gap-1 p-1 bg-popover border border-border rounded-full shadow-lg',
+                isOwn ? 'right-0 -top-10' : 'left-0 -top-10'
+              )}
+              onClick={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+            >
+              {onReply && (
+                <button
+                  onClick={handleReply}
+                  className="p-2 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Reply className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                onClick={handleCopy}
+                className="p-2 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Copy className="h-4 w-4" />
+              </button>
+              {isOwn && onDelete && (
+                <button
+                  onClick={handleDelete}
+                  className="p-2 rounded-full hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                onClick={() => setShowActions(false)}
+                className="p-2 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
           )}
         </div>

@@ -100,6 +100,16 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
+/* Hide scrollbar globally */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+*::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
 /* Hide scrollbar for mobile tabs */
 .hide-scrollbar {
   -ms-overflow-style: none;

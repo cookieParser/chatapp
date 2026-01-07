@@ -177,5 +177,5 @@ export type UserStatus = 'online' | 'offline' | 'away';
 export interface PresencePayload {
   userId: string;
   status: UserStatus;
-  lastSeen: string;
+  lastSeen: string | null;
 }

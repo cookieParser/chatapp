@@ -1,16 +1,14 @@
-'use client';
-
 /**
- * Socket.IO Hook for Real-time Messaging
+ * Optimized Socket.IO Hook
  * 
- * This hook provides the primary interface for sending and receiving messages.
- * All message operations are handled via Socket.IO - there are no HTTP fallbacks.
- * 
- * Messages are scoped to conversation-specific rooms:
- * - Users auto-join their conversation rooms on connection
- * - Messages are only broadcast to participants in the same conversation
- * - No global message broadcasting occurs
+ * WhatsApp-like socket behavior:
+ * - Connect only when app is visible (foreground)
+ * - Silent reconnection with exponential backoff
+ * - Used only for typing, presence, and read receipts
+ * - Messages delivered via push notifications when in background
  */
+
+'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
@@ -18,68 +16,85 @@ import { SOCKET_THROTTLE } from '@/lib/constants';
 import {
   ClientToServerEvents,
   ServerToClientEvents,
-  SendMessagePayload,
-  MessagePayload,
-  MinimalMessagePayload,
-  MessageResponse,
   TypingPayload,
-  TypingUpdatePayload,
-  BatchStatusUpdatePayload,
   PresencePayload,
+  MinimalMessagePayload,
 } from '@/lib/socket/types';
-import { setPresenceSocket } from './usePresence';
 import { usePresenceStore } from '@/store/presenceStore';
 
 type SocketClient = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-interface UseSocketOptions {
+interface UseOptimizedSocketOptions {
   userId: string;
   username: string;
+  enabled?: boolean;
   onMessage?: (message: MinimalMessagePayload) => void;
   onTypingStart?: (data: TypingPayload) => void;
   onTypingStop?: (data: TypingPayload) => void;
-  onTypingUpdate?: (data: TypingUpdatePayload) => void;
-  onUserOnline?: (userId: string) => void;
-  onUserOffline?: (userId: string) => void;
-  onMessageDelivered?: (data: { messageId: string; userId: string }) => void;
-  onMessageRead?: (data: { messageId: string; userId: string }) => void;
-  onBatchDelivered?: (data: BatchStatusUpdatePayload) => void;
-  onBatchRead?: (data: BatchStatusUpdatePayload) => void;
+  onMessageDeleted?: (data: { messageId: string; conversationId: string }) => void;
 }
 
-export function useSocket(options: UseSocketOptions) {
+// Connection states for UI feedback
+type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+// Exponential backoff configuration
+const BACKOFF_CONFIG = {
+  initialDelay: 1000,
+  maxDelay: 30000,
+  multiplier: 1.5,
+  jitter: 0.3,
+};
+
+export function useOptimizedSocket(options: UseOptimizedSocketOptions) {
   const {
     userId,
     username,
+    enabled = true,
     onMessage,
     onTypingStart,
     onTypingStop,
-    onTypingUpdate,
-    onUserOnline,
-    onUserOffline,
-    onMessageDelivered,
-    onMessageRead,
-    onBatchDelivered,
-    onBatchRead,
+    onMessageDeleted,
   } = options;
 
   const socketRef = useRef<SocketClient | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const [isVisible, setIsVisible] = useState(true);
   
-  // Typing debounce refs
+  // Reconnection state
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Typing state
   const typingTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   const isTypingRef = useRef<Map<string, boolean>>(new Map());
   
-  // Batch receipt refs
+  // Batch receipt queues
   const deliveredQueueRef = useRef<Map<string, Set<string>>>(new Map());
   const readQueueRef = useRef<Map<string, Set<string>>>(new Map());
   const flushTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Flush batched receipts
+  // Presence store
+  const { setPresence, setPresenceBulk } = usePresenceStore();
+
+  /**
+   * Calculate backoff delay with jitter
+   */
+  const getBackoffDelay = useCallback(() => {
+    const { initialDelay, maxDelay, multiplier, jitter } = BACKOFF_CONFIG;
+    const delay = Math.min(
+      initialDelay * Math.pow(multiplier, reconnectAttemptRef.current),
+      maxDelay
+    );
+    const jitterAmount = delay * jitter * (Math.random() * 2 - 1);
+    return Math.round(delay + jitterAmount);
+  }, []);
+
+  /**
+   * Flush batched receipts
+   */
   const flushReceipts = useCallback(() => {
     if (!socketRef.current?.connected) return;
 
-    // Flush delivered receipts
     deliveredQueueRef.current.forEach((messageIds, conversationId) => {
       if (messageIds.size > 0) {
         socketRef.current?.emit('message:delivered:batch', {
@@ -91,7 +106,6 @@ export function useSocket(options: UseSocketOptions) {
       }
     });
 
-    // Flush read receipts
     readQueueRef.current.forEach((messageIds, conversationId) => {
       if (messageIds.size > 0) {
         socketRef.current?.emit('message:read:batch', {
@@ -106,59 +120,67 @@ export function useSocket(options: UseSocketOptions) {
     flushTimeoutRef.current = null;
   }, [userId]);
 
-  // Schedule flush if not already scheduled
   const scheduleFlush = useCallback(() => {
     if (!flushTimeoutRef.current) {
       flushTimeoutRef.current = setTimeout(flushReceipts, SOCKET_THROTTLE.BATCH_RECEIPTS_MS);
     }
   }, [flushReceipts]);
 
-  useEffect(() => {
-    if (!userId || !username) return;
+  /**
+   * Connect socket
+   */
+  const connect = useCallback(() => {
+    if (!userId || !username || !enabled) return;
+    if (socketRef.current?.connected) return;
 
-    // Use environment variable for socket URL, fallback to localhost for dev
+    setConnectionState('connecting');
+
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
-    
+
     const socket: SocketClient = io(socketUrl, {
       auth: { userId, username },
       transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
+      reconnection: false, // We handle reconnection manually
+      timeout: 10000,
     });
 
     socketRef.current = socket;
-    // Set socket reference for presence hook
-    setPresenceSocket(socket);
-
-    // Get presence store methods
-    const { setPresence, setPresenceBulk } = usePresenceStore.getState();
-
-    // Handle tab visibility changes - reconnect when tab becomes visible
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && socket && !socket.connected) {
-        console.log('Tab visible, reconnecting socket...');
-        socket.connect();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     socket.on('connect', () => {
-      console.log('Socket connected');
-      setIsConnected(true);
+      console.log('[Socket] Connected');
+      setConnectionState('connected');
+      reconnectAttemptRef.current = 0;
     });
 
-    socket.on('disconnect', () => {
-      console.log('Socket disconnected');
-      setIsConnected(false);
+    socket.on('disconnect', (reason) => {
+      console.log('[Socket] Disconnected:', reason);
+      setConnectionState('disconnected');
+
+      // Auto-reconnect if still visible and not intentional disconnect
+      if (isVisible && reason !== 'io client disconnect') {
+        scheduleReconnect();
+      }
     });
 
+    socket.on('connect_error', (error) => {
+      console.error('[Socket] Connection error:', error.message);
+      setConnectionState('disconnected');
+      
+      if (isVisible) {
+        scheduleReconnect();
+      }
+    });
+
+    // Message events (backup to push notifications)
     socket.on('message:new', (message) => {
       onMessage?.(message);
     });
 
+    socket.on('message:deleted', (data) => {
+      onMessageDeleted?.(data);
+    });
+
+    // Typing events
     socket.on('typing:start', (data) => {
       onTypingStart?.(data);
     });
@@ -167,34 +189,13 @@ export function useSocket(options: UseSocketOptions) {
       onTypingStop?.(data);
     });
 
-    socket.on('typing:update', (data) => {
-      onTypingUpdate?.(data);
-    });
-
-    socket.on('message:delivered', (data) => {
-      onMessageDelivered?.({ messageId: data.messageId, userId: data.userId });
-    });
-
-    socket.on('message:read', (data) => {
-      onMessageRead?.({ messageId: data.messageId, userId: data.userId });
-    });
-
-    socket.on('message:delivered:batch', (data) => {
-      onBatchDelivered?.(data);
-    });
-
-    socket.on('message:read:batch', (data) => {
-      onBatchRead?.(data);
-    });
-
+    // Presence events
     socket.on('user:online', (id) => {
       setPresence(id, 'online', new Date());
-      onUserOnline?.(id);
     });
 
     socket.on('user:offline', (id) => {
       setPresence(id, 'offline', new Date());
-      onUserOffline?.(id);
     });
 
     socket.on('presence:update', (data: PresencePayload) => {
@@ -202,82 +203,157 @@ export function useSocket(options: UseSocketOptions) {
     });
 
     socket.on('presence:bulk', (data: PresencePayload[]) => {
-      const presences = data.map(d => ({
+      setPresenceBulk(data.map(d => ({
         userId: d.userId,
         status: d.status,
         lastSeen: d.lastSeen ? new Date(d.lastSeen) : null,
-      }));
-      setPresenceBulk(presences);
+      })));
     });
 
-    socket.on('error', (error) => {
-      console.error('Socket error:', error);
+    // Read receipt events
+    socket.on('message:delivered:batch', (data) => {
+      // Handle batch delivery confirmations
     });
+
+    socket.on('message:read:batch', (data) => {
+      // Handle batch read confirmations
+    });
+  }, [userId, username, enabled, isVisible, onMessage, onTypingStart, onTypingStop, onMessageDeleted, setPresence, setPresenceBulk]);
+
+  /**
+   * Disconnect socket
+   */
+  const disconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+
+    setConnectionState('disconnected');
+  }, []);
+
+  /**
+   * Schedule reconnection with exponential backoff
+   */
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) return;
+
+    const delay = getBackoffDelay();
+    reconnectAttemptRef.current++;
+
+    console.log(`[Socket] Reconnecting in ${delay}ms (attempt ${reconnectAttemptRef.current})`);
+    setConnectionState('reconnecting');
+
+    reconnectTimeoutRef.current = setTimeout(() => {
+      reconnectTimeoutRef.current = null;
+      connect();
+    }, delay);
+  }, [connect, getBackoffDelay]);
+
+  /**
+   * Handle visibility change
+   */
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const visible = document.visibilityState === 'visible';
+      setIsVisible(visible);
+
+      if (visible) {
+        // App came to foreground - connect
+        if (!socketRef.current?.connected) {
+          reconnectAttemptRef.current = 0; // Reset backoff
+          connect();
+        }
+      } else {
+        // App went to background - disconnect after delay
+        // Keep connection briefly for any pending operations
+        setTimeout(() => {
+          if (document.visibilityState !== 'visible') {
+            console.log('[Socket] Disconnecting (app in background)');
+            disconnect();
+          }
+        }, 5000);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Initial connection if visible
+    if (document.visibilityState === 'visible') {
+      connect();
+    }
 
     return () => {
-      // Remove visibility change listener
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      
-      // Clear all typing timeouts
-      typingTimeoutRef.current.forEach((timeout) => clearTimeout(timeout));
+      disconnect();
+    };
+  }, [connect, disconnect]);
+
+  /**
+   * Cleanup on unmount
+   */
+  useEffect(() => {
+    return () => {
+      typingTimeoutRef.current.forEach(clearTimeout);
       typingTimeoutRef.current.clear();
       
-      // Flush any pending receipts before disconnect
       if (flushTimeoutRef.current) {
         clearTimeout(flushTimeoutRef.current);
         flushReceipts();
       }
-      
-      socket.disconnect();
-      socketRef.current = null;
-      setPresenceSocket(null);
     };
-  }, [userId, username, onMessage, onTypingStart, onTypingStop, onTypingUpdate, 
-      onUserOnline, onUserOffline, onMessageDelivered, onMessageRead, 
-      onBatchDelivered, onBatchRead, flushReceipts]);
+  }, [flushReceipts]);
+
+  // ============================================
+  // PUBLIC API
+  // ============================================
 
   const joinConversation = useCallback((conversationId: string) => {
     socketRef.current?.emit('conversation:join', conversationId);
   }, []);
 
   const leaveConversation = useCallback((conversationId: string) => {
+    // Flush receipts before leaving
+    flushReceipts();
     socketRef.current?.emit('conversation:leave', conversationId);
-  }, []);
+  }, [flushReceipts]);
 
   const sendMessage = useCallback(
-    (data: SendMessagePayload): Promise<MessageResponse> => {
-      return new Promise((resolve) => {
+    (data: { conversationId: string; content: string; type?: 'text' | 'image' | 'file'; replyToId?: string }) => {
+      return new Promise<{ success: boolean; message?: any; error?: string }>((resolve) => {
         if (!socketRef.current?.connected) {
           resolve({ success: false, error: 'Not connected' });
           return;
         }
+
         // Stop typing when sending
-        const conversationId = data.conversationId;
-        if (isTypingRef.current.get(conversationId)) {
-          socketRef.current?.emit('typing:stop', conversationId);
-          isTypingRef.current.set(conversationId, false);
+        if (isTypingRef.current.get(data.conversationId)) {
+          socketRef.current?.emit('typing:stop', data.conversationId);
+          isTypingRef.current.set(data.conversationId, false);
         }
+
         socketRef.current.emit('message:send', data, resolve);
       });
     },
     []
   );
 
-  // Debounced typing - only emits if not already typing, auto-stops after timeout
   const startTyping = useCallback((conversationId: string) => {
-    // Clear existing timeout
     const existingTimeout = typingTimeoutRef.current.get(conversationId);
     if (existingTimeout) {
       clearTimeout(existingTimeout);
     }
 
-    // Only emit if not already marked as typing
     if (!isTypingRef.current.get(conversationId)) {
       isTypingRef.current.set(conversationId, true);
       socketRef.current?.emit('typing:start', conversationId);
     }
 
-    // Set auto-stop timeout
     const timeout = setTimeout(() => {
       if (isTypingRef.current.get(conversationId)) {
         socketRef.current?.emit('typing:stop', conversationId);
@@ -302,7 +378,6 @@ export function useSocket(options: UseSocketOptions) {
     }
   }, []);
 
-  // Batched delivery confirmation - queues and flushes periodically
   const markDelivered = useCallback((messageId: string, conversationId: string) => {
     if (!deliveredQueueRef.current.has(conversationId)) {
       deliveredQueueRef.current.set(conversationId, new Set());
@@ -311,7 +386,6 @@ export function useSocket(options: UseSocketOptions) {
     scheduleFlush();
   }, [scheduleFlush]);
 
-  // Batched read receipt - queues and flushes periodically
   const markRead = useCallback((messageId: string, conversationId: string) => {
     if (!readQueueRef.current.has(conversationId)) {
       readQueueRef.current.set(conversationId, new Set());
@@ -320,17 +394,6 @@ export function useSocket(options: UseSocketOptions) {
     scheduleFlush();
   }, [scheduleFlush]);
 
-  // Batch mark multiple messages as delivered
-  const markDeliveredBatch = useCallback((messageIds: string[], conversationId: string) => {
-    if (!deliveredQueueRef.current.has(conversationId)) {
-      deliveredQueueRef.current.set(conversationId, new Set());
-    }
-    const queue = deliveredQueueRef.current.get(conversationId)!;
-    messageIds.forEach(id => queue.add(id));
-    scheduleFlush();
-  }, [scheduleFlush]);
-
-  // Batch mark multiple messages as read
   const markReadBatch = useCallback((messageIds: string[], conversationId: string) => {
     if (!readQueueRef.current.has(conversationId)) {
       readQueueRef.current.set(conversationId, new Set());
@@ -340,22 +403,12 @@ export function useSocket(options: UseSocketOptions) {
     scheduleFlush();
   }, [scheduleFlush]);
 
-  // Force flush receipts immediately (useful when leaving conversation)
-  const flushReceiptsNow = useCallback(() => {
-    if (flushTimeoutRef.current) {
-      clearTimeout(flushTimeoutRef.current);
-    }
-    flushReceipts();
-  }, [flushReceipts]);
-
-  // Subscribe to presence updates for specific users
   const subscribeToPresence = useCallback((userIds: string[]) => {
     if (socketRef.current?.connected && userIds.length > 0) {
       socketRef.current.emit('presence:subscribe', userIds);
     }
   }, []);
 
-  // Unsubscribe from presence updates
   const unsubscribeFromPresence = useCallback((userIds: string[]) => {
     if (socketRef.current?.connected && userIds.length > 0) {
       socketRef.current.emit('presence:unsubscribe', userIds);
@@ -363,17 +416,32 @@ export function useSocket(options: UseSocketOptions) {
   }, []);
 
   return {
-    isConnected,
+    // Connection state
+    connectionState,
+    isConnected: connectionState === 'connected',
+    isReconnecting: connectionState === 'reconnecting',
+    
+    // Connection control
+    connect,
+    disconnect,
+    
+    // Conversation management
     joinConversation,
     leaveConversation,
+    
+    // Messaging
     sendMessage,
+    
+    // Typing indicators
     startTyping,
     stopTyping,
+    
+    // Read receipts
     markDelivered,
     markRead,
-    markDeliveredBatch,
     markReadBatch,
-    flushReceiptsNow,
+    
+    // Presence
     subscribeToPresence,
     unsubscribeFromPresence,
   };

@@ -7,12 +7,12 @@ export type UserStatus = 'online' | 'offline' | 'away';
 export interface UserPresence {
   userId: string;
   status: UserStatus;
-  lastSeen: Date;
+  lastSeen: Date | null;
 }
 
 interface PresenceState {
   presenceMap: Map<string, UserPresence>;
-  setPresence: (userId: string, status: UserStatus, lastSeen: Date) => void;
+  setPresence: (userId: string, status: UserStatus, lastSeen: Date | null) => void;
   setPresenceBulk: (presences: UserPresence[]) => void;
   getPresence: (userId: string) => UserPresence | undefined;
   isOnline: (userId: string) => boolean;
