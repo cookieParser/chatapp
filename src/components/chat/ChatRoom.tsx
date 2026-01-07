@@ -624,9 +624,9 @@ export function ChatRoom({ conversationId, conversationName, conversationType, o
   const { closeChat } = useChatStore();
 
   return (
-    <div className="flex flex-col h-full bg-gray-950">
+    <div className="flex flex-col h-full bg-gray-950 fixed inset-0 md:relative md:inset-auto">
       {/* Header */}
-      <header className="flex items-center justify-between px-2 sm:px-4 py-2 sm:py-3 border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm sticky top-0 z-10">
+      <header className="flex items-center justify-between px-2 sm:px-4 py-2 sm:py-3 border-b border-gray-800 bg-gray-900 flex-shrink-0 z-10">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           {/* Back button - mobile only */}
           <button
@@ -674,7 +674,7 @@ export function ChatRoom({ conversationId, conversationName, conversationType, o
       />
 
       {/* Input */}
-      <div className="p-2 sm:p-4 border-t border-gray-800 bg-gray-900/95 backdrop-blur-sm">
+      <div className="p-2 sm:p-4 border-t border-gray-800 bg-gray-900 flex-shrink-0 safe-area-inset-bottom">
         {/* Reply preview */}
         {replyingTo && (
           <div className="mb-2 flex items-center justify-between bg-gray-800/80 rounded-lg px-3 py-2 border-l-2 border-blue-500">

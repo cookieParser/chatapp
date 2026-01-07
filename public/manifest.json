@@ -2,10 +2,10 @@
   "name": "ChatApp",
   "short_name": "Chat",
   "description": "Real-time chat application",
-  "start_url": "/",
+  "start_url": "/?pwa=true",
   "display": "standalone",
   "background_color": "#030712",
-  "theme_color": "#3b82f6",
+  "theme_color": "#030712",
   "orientation": "portrait-primary",
   "scope": "/",
   "icons": [
